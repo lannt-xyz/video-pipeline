@@ -318,7 +318,7 @@ def run_episode(
                 episode_num, phase, str(exc),
             )
             db.set_episode_status(
-                episode_num, f"ERROR", error_msg=f"{phase}: {exc}"
+                episode_num, "ERROR", error_msg=f"{phase}: {exc}"
             )
             raise
 

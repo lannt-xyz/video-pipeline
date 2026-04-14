@@ -5,8 +5,12 @@ from loguru import logger
 
 from config.settings import settings
 from image_gen.comfyui_client import comfyui_client
-from llm.character_extractor import load_all_characters, _slugify
+from llm.character_extractor import load_all_characters
 from models.schemas import Character
+
+
+def _slugify(name: str) -> str:
+    return name.lower().replace(" ", "_").replace("-", "_")
 
 _SCENE_WORKFLOW = "image_gen/workflows/txt2img_scene.json"
 

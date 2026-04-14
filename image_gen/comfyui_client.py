@@ -85,8 +85,10 @@ class ComfyUIClient:
                             f"ComfyUI error for prompt {prompt_id}: {error_msg}"
                         )
                     return entry
-            except (httpx.HTTPError, KeyError):
-                pass
+            except (httpx.HTTPError, KeyError) as exc:
+                logger.debug(
+                    "Poll attempt failed | prompt_id={} error={}", prompt_id, exc
+                )
             time.sleep(self.poll_interval)
 
         raise TimeoutError(
@@ -156,8 +158,10 @@ class ComfyUIClient:
             elif isinstance(value, (int, float)):
                 content = content.replace(quoted, str(value))
             else:
-                # String: replace inline placeholder within existing strings
-                content = content.replace(inline, str(value))
+                # String: JSON-escape the value to prevent breaking json.loads
+                # e.g. scene_prompt from LLM may contain double quotes
+                escaped = json.dumps(str(value))[1:-1]  # strip surrounding quotes
+                content = content.replace(inline, escaped)
 
         return json.loads(content)
 

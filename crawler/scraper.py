@@ -121,35 +121,33 @@ async def crawl_chapters(
     chapter_nums: List[int],
     on_fetched: Optional[Callable[[ChapterMeta], None]] = None,
 ) -> List[ChapterMeta]:
-    """Crawl a list of chapters. Rate-limited to 1 req/s via semaphore.
+    """Crawl a list of chapters. Rate-limited to 1 req/s via sleep.
     Returns all ChapterMeta (with status CRAWLED or ERROR).
     """
-    semaphore = asyncio.Semaphore(1)
     results: List[ChapterMeta] = []
     delay = 1.0 / settings.crawler_rate_limit
 
     async with httpx.AsyncClient() as client:
         for chapter_num in chapter_nums:
             url = settings.get_chapter_url(chapter_num)
-            async with semaphore:
-                try:
-                    chapter = await _fetch_with_retry(client, url, chapter_num)
-                    results.append(chapter)
-                    if on_fetched:
-                        on_fetched(chapter)
-                except Exception as exc:
-                    logger.error(
-                        "Failed to fetch chapter {} | error={}", chapter_num, str(exc)
+            try:
+                chapter = await _fetch_with_retry(client, url, chapter_num)
+                results.append(chapter)
+                if on_fetched:
+                    on_fetched(chapter)
+            except Exception as exc:
+                logger.error(
+                    "Failed to fetch chapter {} | error={}", chapter_num, str(exc)
+                )
+                results.append(
+                    ChapterMeta(
+                        chapter_num=chapter_num,
+                        title=f"Chương {chapter_num}",
+                        url=url,
+                        status="ERROR",
+                        error_msg=str(exc),
                     )
-                    results.append(
-                        ChapterMeta(
-                            chapter_num=chapter_num,
-                            title=f"Chương {chapter_num}",
-                            url=url,
-                            status="ERROR",
-                            error_msg=str(exc),
-                        )
-                    )
-                await asyncio.sleep(delay)
+                )
+            await asyncio.sleep(delay)
 
     return results
