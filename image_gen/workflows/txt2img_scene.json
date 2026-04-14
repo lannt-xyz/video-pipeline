@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "SDXL txt2img scene-only workflow (no characters / no IPAdapter). Uses Ink Wash LoRA for atmosphere.",
-    "checkpoint": "ponyDiffusionV6XL_v65OpusVAE.safetensors",
+    "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
     "loras": ["ink_wash_painting.safetensors"],
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
@@ -15,7 +15,7 @@
   "1": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ponyDiffusionV6XL_v65OpusVAE.safetensors"
+      "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
     }
   },
   "2": {

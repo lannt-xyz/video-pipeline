@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Thumbnail generation workflow — 16:9 (1280x720) with title and CTA text overlay.",
-    "checkpoint": "ponyDiffusionV6XL_v65OpusVAE.safetensors",
+    "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
       "NEGATIVE_PROMPT": "Negative prompt",
@@ -19,7 +19,7 @@
   "1": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ponyDiffusionV6XL_v65OpusVAE.safetensors"
+      "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
     }
   },
   "2": {

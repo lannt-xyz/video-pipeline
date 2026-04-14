@@ -42,9 +42,10 @@ class Settings(BaseSettings):
     comfyui_url: str = "http://localhost:8188"
 
     # LLM configuration
-    llm_model: str = "qwen2.5:7b-instruct:q8_0"
+    llm_model: str = "qwen2.5:7b-instruct-q8_0"
     llm_timeout: int = 120
     llm_max_retries: int = 3
+    llm_context_size: int = 16384
 
     # ComfyUI configuration
     comfyui_timeout: int = 300

@@ -20,6 +20,10 @@ class ComfyUIOutOfMemoryError(RuntimeError):
     """Raised when ComfyUI reports an out-of-memory error."""
 
 
+class ComfyUINodeNotFoundError(RuntimeError):
+    """Raised when a required custom node is not installed in ComfyUI."""
+
+
 class ComfyUIError(RuntimeError):
     """Raised on non-OOM ComfyUI errors."""
 
@@ -58,6 +62,20 @@ class ComfyUIClient:
             json=payload,
             timeout=30.0,
         )
+        if resp.status_code >= 400:
+            logger.error(
+                "ComfyUI rejected workflow | status={} body={}",
+                resp.status_code,
+                resp.text[:2000],
+            )
+            try:
+                err_body = resp.json()
+                err_type = err_body.get("error", {}).get("type", "")
+                if err_type == "missing_node_type":
+                    missing = err_body["error"]["message"]
+                    raise ComfyUINodeNotFoundError(missing)
+            except (ValueError, KeyError):
+                pass
         resp.raise_for_status()
         prompt_id: str = resp.json()["prompt_id"]
         logger.debug("Submitted prompt | id={}", prompt_id)
@@ -163,7 +181,9 @@ class ComfyUIClient:
                 escaped = json.dumps(str(value))[1:-1]  # strip surrounding quotes
                 content = content.replace(inline, escaped)
 
-        return json.loads(content)
+        workflow = json.loads(content)
+        # Strip metadata keys (e.g. "_meta") — ComfyUI rejects non-node top-level keys
+        return {k: v for k, v in workflow.items() if not k.startswith("_")}
 
     def _extract_output_files(self, history_entry: dict) -> List[dict]:
         """Extract all output image/video file references from a history entry."""

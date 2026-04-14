@@ -49,7 +49,10 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {
+                "temperature": temperature,
+                "num_ctx": settings.llm_context_size,
+            },
         }
         if system:
             payload["system"] = system
