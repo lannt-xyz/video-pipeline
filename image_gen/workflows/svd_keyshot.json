@@ -1,0 +1,94 @@
+{
+  "_meta": {
+    "description": "Stable Video Diffusion key-shot workflow. Requires ComfyUI-VideoHelperSuite and SVD checkpoint.",
+    "checkpoint": "svd_xt_1_1.safetensors",
+    "placeholders": {
+      "IMAGE_PATH": "/absolute/path/to/input_image.png",
+      "WIDTH": 720,
+      "HEIGHT": 1280,
+      "SEED": 42
+    },
+    "required_nodes": [
+      "ImageOnlyCheckpointLoader", "LoadImage", "ImageResizeKJ",
+      "SVD_img2vid_Conditioning", "KSamplerAdvanced",
+      "VAEDecodeTiled", "VHS_VideoCombine"
+    ],
+    "note": "Output is ~25 frames @ 6fps (~4.2s). Apply setpts=1.43*PTS in assembler.py to get 6s."
+  },
+  "1": {
+    "class_type": "ImageOnlyCheckpointLoader",
+    "inputs": {
+      "ckpt_name": "svd_xt_1_1.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__IMAGE_PATH__"
+    }
+  },
+  "3": {
+    "class_type": "ImageResizeKJ",
+    "inputs": {
+      "image": ["2", 0],
+      "width": "__WIDTH__",
+      "height": "__HEIGHT__",
+      "upscale_method": "lanczos",
+      "keep_proportion": false,
+      "divisible_by": 64
+    }
+  },
+  "4": {
+    "class_type": "SVD_img2vid_Conditioning",
+    "inputs": {
+      "clip_vision": ["1", 1],
+      "init_image": ["3", 0],
+      "vae": ["1", 2],
+      "width": "__WIDTH__",
+      "height": "__HEIGHT__",
+      "video_frames": 25,
+      "motion_bucket_id": 127,
+      "fps": 6,
+      "augmentation_level": 0.0
+    }
+  },
+  "5": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["4", 1],
+      "latent_image": ["4", 2],
+      "noise_seed": "__SEED__",
+      "steps": 20,
+      "cfg": 2.5,
+      "sampler_name": "euler",
+      "scheduler": "karras",
+      "start_at_step": 0,
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "add_noise": "enable"
+    }
+  },
+  "6": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": ["5", 0],
+      "vae": ["1", 2],
+      "tile_size": 256
+    }
+  },
+  "7": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["6", 0],
+      "frame_rate": 6,
+      "loop_count": 0,
+      "filename_prefix": "svd_keyshot",
+      "format": "video/h264-mp4",
+      "save_output": true,
+      "pingpong": false,
+      "save_image": false
+    }
+  }
+}

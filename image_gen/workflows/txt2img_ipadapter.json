@@ -1,0 +1,140 @@
+{
+  "_meta": {
+    "description": "SDXL txt2img with IPAdapter for character face consistency. Requires ComfyUI-IPAdapter-plus custom node.",
+    "checkpoint": "ponyDiffusionV6XL_v65OpusVAE.safetensors",
+    "loras": ["manhua_style_v2.safetensors", "xianxia_fantasy.safetensors", "dark_horror_atmosphere.safetensors"],
+    "placeholders": {
+      "SCENE_PROMPT": "Positive prompt in English",
+      "NEGATIVE_PROMPT": "Negative prompt",
+      "WIDTH": 720,
+      "HEIGHT": 1280,
+      "SEED": 42,
+      "ANCHOR_PATH": "/absolute/path/to/anchor.png"
+    },
+    "required_nodes": [
+      "CheckpointLoaderSimple", "LoraLoader", "CLIPTextEncode", "KSampler",
+      "VAEDecode", "SaveImage", "IPAdapterModelLoader", "IPAdapterApply",
+      "LoadImage"
+    ]
+  },
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ponyDiffusionV6XL_v65OpusVAE.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["1", 0],
+      "clip": ["1", 1],
+      "lora_name": "manhua_style_v2.safetensors",
+      "strength_model": 0.7,
+      "strength_clip": 0.7
+    }
+  },
+  "3": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["2", 0],
+      "clip": ["2", 1],
+      "lora_name": "xianxia_fantasy.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5
+    }
+  },
+  "4": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["3", 0],
+      "clip": ["3", 1],
+      "lora_name": "dark_horror_atmosphere.safetensors",
+      "strength_model": 0.4,
+      "strength_clip": 0.4
+    }
+  },
+  "5": {
+    "class_type": "IPAdapterModelLoader",
+    "inputs": {
+      "ipadapter_file": "ip-adapter-plus-face_sdxl_vit-h.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+    }
+  },
+  "7": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_PATH__"
+    }
+  },
+  "8": {
+    "class_type": "IPAdapterApply",
+    "inputs": {
+      "ipadapter": ["5", 0],
+      "clip_vision": ["6", 0],
+      "image": ["7", 0],
+      "model": ["4", 0],
+      "weight": 0.8,
+      "noise": 0.05,
+      "weight_type": "original",
+      "start_at": 0.0,
+      "end_at": 1.0,
+      "unfold_batch": false
+    }
+  },
+  "9": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__SCENE_PROMPT__, score_9, score_8_up, score_7_up, masterpiece, best quality, highly detailed",
+      "clip": ["4", 1]
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__, score_1, score_2, score_3, score_4, nsfw",
+      "clip": ["4", 1]
+    }
+  },
+  "11": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": "__WIDTH__",
+      "height": "__HEIGHT__",
+      "batch_size": 1
+    }
+  },
+  "12": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["8", 0],
+      "positive": ["9", 0],
+      "negative": ["10", 0],
+      "latent_image": ["11", 0],
+      "seed": "__SEED__",
+      "steps": 28,
+      "cfg": 6.0,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 1.0
+    }
+  },
+  "13": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["12", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "14": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["13", 0],
+      "filename_prefix": "character_shot"
+    }
+  }
+}

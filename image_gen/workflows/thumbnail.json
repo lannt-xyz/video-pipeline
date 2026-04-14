@@ -1,0 +1,114 @@
+{
+  "_meta": {
+    "description": "Thumbnail generation workflow — 16:9 (1280x720) with title and CTA text overlay.",
+    "checkpoint": "ponyDiffusionV6XL_v65OpusVAE.safetensors",
+    "placeholders": {
+      "SCENE_PROMPT": "Positive prompt in English",
+      "NEGATIVE_PROMPT": "Negative prompt",
+      "WIDTH": 1280,
+      "HEIGHT": 720,
+      "SEED": 42,
+      "TITLE_TEXT": "Tập 1",
+      "CTA_TEXT": "Link bio 👇"
+    },
+    "required_nodes": [
+      "CheckpointLoaderSimple", "CLIPTextEncode", "KSampler",
+      "VAEDecode", "DrawText", "ImageComposite", "SaveImage"
+    ]
+  },
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ponyDiffusionV6XL_v65OpusVAE.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["1", 0],
+      "clip": ["1", 1],
+      "lora_name": "manhua_style_v2.safetensors",
+      "strength_model": 0.7,
+      "strength_clip": 0.7
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__SCENE_PROMPT__, score_9, score_8_up, masterpiece, best quality, cinematic, wide shot",
+      "clip": ["2", 1]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__, score_1, score_2, score_3, nsfw",
+      "clip": ["2", 1]
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": "__WIDTH__",
+      "height": "__HEIGHT__",
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["5", 0],
+      "seed": "__SEED__",
+      "steps": 28,
+      "cfg": 6.5,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 1.0
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["6", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "8": {
+    "class_type": "DrawText",
+    "inputs": {
+      "image": ["7", 0],
+      "text": "__TITLE_TEXT__",
+      "font": "Arial",
+      "font_size": 72,
+      "color": "#FFFFFF",
+      "background": "#00000088",
+      "x": 60,
+      "y": 60,
+      "shadow": true
+    }
+  },
+  "9": {
+    "class_type": "DrawText",
+    "inputs": {
+      "image": ["8", 0],
+      "text": "__CTA_TEXT__",
+      "font": "Arial",
+      "font_size": 48,
+      "color": "#FFD700",
+      "background": "#00000088",
+      "x": 60,
+      "y": 620,
+      "shadow": true
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["9", 0],
+      "filename_prefix": "thumbnail"
+    }
+  }
+}

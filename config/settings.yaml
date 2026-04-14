@@ -1,0 +1,59 @@
+# Story source
+story_slug: "mao-son-troc-quy-nhan"
+base_url: "https://truyencv.io/truyen/{story_slug}/chuong-{n}/"
+total_chapters: 3534
+chapters_per_episode: 35
+
+# API endpoints
+ollama_url: "http://localhost:11434"
+comfyui_url: "http://localhost:8188"
+
+# LLM configuration
+llm_model: "qwen2.5:7b-instruct:q8_0"
+llm_timeout: 120
+llm_max_retries: 3
+
+# ComfyUI configuration
+comfyui_timeout: 300
+comfyui_poll_interval: 2
+
+# Image generation (9:16 portrait)
+image_width: 720
+image_height: 1280
+
+# Thumbnail (16:9 landscape)
+thumbnail_width: 1280
+thumbnail_height: 720
+
+# Video settings
+fps: 30
+target_duration_sec: 60
+shot_duration_sec: 6
+
+# Audio
+tts_voice: "vi-VN-HoaiMyNeural"
+bgm_volume_db: -15
+
+# Pipeline feature flags
+enable_svd: false
+
+# Characters to generate anchor images for
+characters:
+  - "Diep Thieu Duong"
+
+# Paths (relative to project root)
+data_dir: "data"
+db_path: "db/pipeline.db"
+logs_dir: "logs"
+assets_dir: "assets"
+
+# Crawler
+crawler_rate_limit: 1.0
+crawler_max_retries: 5
+
+# LoRA weights for ComfyUI (Pony V6 XL)
+lora_weights:
+  manhua_style: 0.7
+  xianxia_fantasy: 0.5
+  dark_horror: 0.4
+  ink_wash: 0.6
