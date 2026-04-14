@@ -56,7 +56,7 @@
   "5": {
     "class_type": "IPAdapterModelLoader",
     "inputs": {
-      "ipadapter_file": "ip-adapter-plus-face_sdxl_vit-h.safetensors"
+      "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"
     }
   },
   "6": {
