@@ -10,15 +10,19 @@
 **File:** scriptwriter.py
 
 **Bước 1 — Hook rule:** Thêm vào `_SCRIPTWRITER_SYSTEM`:
-- Shot 1 MUST mở bằng curiosity gap hoặc shock — cấm mở kiểu kể backstory ("Tôi bắt đầu hành trình tại...")
-- Hook phải giữ **thứ tự tuyến tính** — không được tease scene cuối rồi quay lại. Hook là scene đầu tiên của story, viết lại theo góc độ shock/mystery.
+- Shot 1 MUST mở bằng một **hành động cụ thể** hoặc **câu thoại/câu kể gây sốc** — cấm mở kiểu mô tả bối cảnh hoặc kể backstory.
+- Hook phải giữ **thứ tự tuyến tính** — không được tease scene cuối rồi quay lại. Hook là scene đầu tiên của story, viết lại theo góc độ hành động/shock.
+- Ví dụ pattern: "Một tiếng thét xé lòng vang lên..." / "Hắn mở nắp quan tài và..." (không phải "Diệp Thiếu Dương đứng trước ngôi miếu cổ")
 - Thêm WRONG/RIGHT example cho hook (tương tự pattern scene_prompt đang có)
 
 **Bước 2 — Cliffhanger rule:** Thêm vào `_SCRIPTWRITER_SYSTEM`:
-- Shot 8 (final) MUST kết thúc bằng câu hỏi chưa có đáp án hoặc câu bị cắt ngang
-- Forbidden: CTA "theo dõi tiếp", kết thúc trọn vẹn
+- Shot 8 (final) MUST kết thúc ở **đỉnh điểm của sự tò mò** — câu hỏi chưa có đáp án, hành động bị dừng nửa chừng, hoặc revelation bị cắt ngay trước khi reveal.
+- Forbidden: CTA "theo dõi tiếp", kết thúc trọn vẹn, giải thích xong hết.
 
-**Bước 3 — Pacing hint trong prompt:** Thêm rule `Shot 1 và Shot 2: duration_sec = 2 hoặc 3`. LLM sẽ được guide ngay từ prompt để output đúng giá trị.
+**Bước 3 — Pacing hint trong prompt:** Thêm rule:
+- `Shot 1 và Shot 2: duration_sec = 2 hoặc 3`
+- `Shot 1 và Shot 2: narration_text không quá 12 từ` — TTS cần khớp với 2–3s, narration quá dài sẽ bị cắt cụt hoặc đọc không kịp.
+- LLM được guide ngay từ prompt để output đúng cả hai giá trị.
 
 ---
 
@@ -50,7 +54,7 @@
 **File:** editor.py
 
 **Bước 7 — Thêm 2 keyword list:**
-- `_DANGER_KEYWORDS`: chết, xác, mộ, quỷ, máu, ám, tà, oan, hồn, thi hài, quan tài...
+- `_DANGER_KEYWORDS`: chết, xác, mộ, quỷ, máu, ám, tà, oan, hồn, thi hài, quan tài, phanh thây, cắn xé, gào thét, biến mất, sụp đổ...
 - `_TWIST_KEYWORDS`: thật ra, không ngờ, bất ngờ, hóa ra, thực chất...
 
 **Bước 8 — Wrap keywords trong `generate_ass()`:**
