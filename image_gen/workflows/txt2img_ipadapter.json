@@ -69,7 +69,7 @@
     "inputs": {
       "model": ["5", 0],
       "preset": "PLUS (high strength)",
-      "lora_strength": 0.0,
+      "lora_strength": 0.6,
       "provider": "CPU"
     }
   },

@@ -58,7 +58,7 @@ class EpisodeValidator:
         duration = float(probe.get("format", {}).get("duration", 0))
         # TTS audio drives clip duration; 8 shots × 10-25s = 80-200s typical
         if not (60 <= duration <= 250):
-            return [f"Duration {duration:.1f}s not in [40s, 90s]"]
+            return [f"Duration {duration:.1f}s not in [60s, 250s]"]
         return []
 
     def _check_resolution(self, probe: dict) -> list:

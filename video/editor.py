@@ -62,6 +62,54 @@ def _to_ass_time(seconds: float) -> str:
 
 _WORDS_PER_SEGMENT = 4
 
+# ASS BGR colour codes for keyword highlight
+_DANGER_COLOUR = "&H0000FF&"  # red
+_TWIST_COLOUR = "&H00FFFF&"   # yellow
+
+# Words that trigger danger highlight (red) — genre-specific Vietnamese horror/action terms
+_DANGER_KEYWORDS = frozenset([
+    "chết", "xác", "mộ", "quỷ", "máu", "ám", "tà", "oan", "hồn",
+    "thi", "hài", "quan", "tài", "phanh", "thây", "cắn", "xé",
+    "gào", "thét", "biến", "mất", "sụp", "đổ", "giết", "má", "linh",
+    "âm", "tử", "hồn", "ma", "thần", "kỳ", "dị", "nghiệp",
+])
+
+# Multi-word trigger phrases — checked in order before single-word match
+_DANGER_PHRASES = ("thi hài", "quan tài", "phanh thây", "cắn xé", "gào thét", "biến mất", "sụp đổ")
+_TWIST_PHRASES = ("thật ra", "không ngờ", "bất ngờ", "hóa ra", "thực chất", "đột ngột")
+
+
+def _tag_word(word: str, word_dur_cs: int) -> str:
+    """Return ASS-tagged word with karaoke timing and optional colour highlight.
+    All override tags are in a single block per ASS spec.
+    Falls back to plain kf tag on any error.
+    Twist detection is phrase-based — call _tag_segment() for multi-word context.
+    """
+    try:
+        lower = word.lower()
+        if lower in _DANGER_KEYWORDS:
+            return f"{{\\kf{word_dur_cs}\\c{_DANGER_COLOUR}}}{word}{{\\r}}"
+    except Exception:
+        logger.warning("Keyword tag failed for word={!r}, using plain tag", word)
+    return f"{{\\kf{word_dur_cs}}}{word}"
+
+
+def _tag_segment(seg_words: List[str], word_dur_cs: int) -> str:
+    """Build karaoke text for a segment, applying danger or twist colours.
+    Twist is detected at segment level (multi-word phrase); danger at word level.
+    """
+    try:
+        seg_lower = " ".join(w.lower() for w in seg_words)
+        # Check if segment contains a twist phrase — highlight entire segment yellow
+        for phrase in _TWIST_PHRASES:
+            if phrase in seg_lower:
+                return " ".join(
+                    f"{{\\kf{word_dur_cs}\\c{_TWIST_COLOUR}}}{w}{{\\r}}" for w in seg_words
+                )
+    except Exception:
+        logger.warning("Segment phrase tag failed, falling back to word-level tagging")
+    return " ".join(_tag_word(w, word_dur_cs) for w in seg_words)
+
 
 def generate_ass(shots: List[ShotScript], output_path: Path, intro_duration: float = 0.0) -> None:
     """Write ASS subtitle file with karaoke fill effect (\\kf per word).
@@ -114,9 +162,7 @@ def generate_ass(shots: List[ShotScript], output_path: Path, intro_duration: flo
             seg_start = current_time
             seg_end = current_time + seg_duration
             word_dur_cs = max(1, int(seg_duration * 100 / len(seg_words)))
-            karaoke_text = " ".join(
-                f"{{\\kf{word_dur_cs}}}{w}" for w in seg_words
-            )
+            karaoke_text = _tag_segment(seg_words, word_dur_cs)
             dialogue_lines.append(
                 f"Dialogue: 0,{_to_ass_time(seg_start)},{_to_ass_time(seg_end)},"
                 f"Karaoke,,0,0,0,,{karaoke_text}"

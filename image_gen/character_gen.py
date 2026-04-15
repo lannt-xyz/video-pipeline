@@ -1,3 +1,4 @@
+import hashlib
 import json
 import unicodedata
 from pathlib import Path
@@ -23,6 +24,12 @@ def _slugify(name: str) -> str:
 _SCENE_WORKFLOW = "image_gen/workflows/txt2img_scene.json"
 
 _NEGATIVE = (
+    # Hard NSFW block
+    "nsfw, nudity, naked, nude, nipples, pussy, penis, genitals, "
+    "underwear, lingerie, bikini, swimsuit, cleavage, navel, bare skin, "
+    "undressing, topless, bottomless, lewd, ecchi, explicit, uncensored, "
+    "alluring, seductive, suggestive, provocative, "
+    # Quality anti-tags
     "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, "
     "fewer digits, cropped, worst quality, low quality, normal quality, "
     "jpeg artifacts, signature, watermark, username, blurry, score_1, score_2"
@@ -73,7 +80,7 @@ def _generate_single_anchor(character: Character, force: bool = False) -> Path:
             "NEGATIVE_PROMPT": _NEGATIVE,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
-            "SEED": abs(hash(character.name)) % (2**32),
+            "SEED": int(hashlib.md5(character.name.encode()).hexdigest(), 16) % (2**32),
         },
         output_path=anchor_path,
     )

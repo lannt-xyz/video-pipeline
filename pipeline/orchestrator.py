@@ -52,8 +52,20 @@ def run_crawl(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     chapter_start, chapter_end = _episode_chapter_range(episode_num)
     db.upsert_episode(episode_num, chapter_start, chapter_end)
 
-    already = set(db.get_crawled_chapters(chapter_start, chapter_end))
-    to_crawl = [n for n in range(chapter_start, chapter_end + 1) if n not in already]
+    chapters_dir = Path(settings.data_dir) / "chapters"
+    db_crawled = set(db.get_crawled_chapters(chapter_start, chapter_end))
+    # Cross-check: chapter DB says crawled but file missing → re-crawl it
+    actually_crawled = {
+        n for n in db_crawled
+        if (chapters_dir / f"chuong-{n:04d}.txt").exists()
+    }
+    missing_from_disk = db_crawled - actually_crawled
+    if missing_from_disk:
+        logger.warning(
+            "{} chapters in DB but missing on disk, will re-crawl | chapters={}",
+            len(missing_from_disk), sorted(missing_from_disk)[:10],
+        )
+    to_crawl = [n for n in range(chapter_start, chapter_end + 1) if n not in actually_crawled]
 
     if not to_crawl:
         logger.info("All chapters already crawled | episode={}", episode_num)
@@ -141,6 +153,14 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     characters_map = {c.name: c for c in load_all_characters()}
 
     negative = (
+        # Hard NSFW block — must come first for PonyXL
+        "nsfw, nudity, naked, nude, nipples, pussy, penis, genitals, "
+        "underwear, lingerie, bikini, swimsuit, cleavage, navel, bare skin, "
+        "undressing, topless, bottomless, lewd, ecchi, explicit, uncensored, "
+        "(nsfw:1.5), (nudity:1.5), (naked:1.5), "
+        # Dangerous soft tags that PonyXL associates with NSFW
+        "alluring, seductive, suggestive, provocative, erotic, sensual, "
+        "mysterious aura, bedroom eyes, "
         # PonyDiffusion quality anti-tags
         "score_1, score_2, score_3, score_4, score_5, "
         # Text / watermark — prevents manga SFX, speech bubbles, captions
@@ -161,19 +181,33 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
         if shot.characters:
             anchor = get_anchor_path(shot.characters[0])
-            # Prepend character description tags so text prompt reinforces IP-Adapter anchor
-            char_obj = characters_map.get(shot.characters[0])
-            char_tags = char_obj.description if char_obj else ""
-            combined_prompt = f"{char_tags}, {shot.scene_prompt}" if char_tags else shot.scene_prompt
-            workflow = "image_gen/workflows/txt2img_ipadapter.json"
-            replacements = {
-                "SCENE_PROMPT": combined_prompt,
-                "NEGATIVE_PROMPT": negative,
-                "WIDTH": settings.image_width,
-                "HEIGHT": settings.image_height,
-                "SEED": episode_num * 1000 + idx,
-                "ANCHOR_PATH": anchor,
-            }
+            if not anchor.exists():
+                logger.warning(
+                    "Anchor missing, falling back to scene workflow | episode={} shot={} char={}",
+                    episode_num, idx, shot.characters[0],
+                )
+                workflow = "image_gen/workflows/txt2img_scene.json"
+                replacements = {
+                    "SCENE_PROMPT": shot.scene_prompt,
+                    "NEGATIVE_PROMPT": negative,
+                    "WIDTH": settings.image_width,
+                    "HEIGHT": settings.image_height,
+                    "SEED": episode_num * 1000 + idx,
+                }
+            else:
+                # Prepend character description tags so text prompt reinforces IP-Adapter anchor
+                char_obj = characters_map.get(shot.characters[0])
+                char_tags = char_obj.description if char_obj else ""
+                combined_prompt = f"{char_tags}, {shot.scene_prompt}" if char_tags else shot.scene_prompt
+                workflow = "image_gen/workflows/txt2img_ipadapter.json"
+                replacements = {
+                    "SCENE_PROMPT": combined_prompt,
+                    "NEGATIVE_PROMPT": negative,
+                    "WIDTH": settings.image_width,
+                    "HEIGHT": settings.image_height,
+                    "SEED": episode_num * 1000 + idx,
+                    "ANCHOR_PATH": anchor,
+                }
         else:
             workflow = "image_gen/workflows/txt2img_scene.json"
             replacements = {
