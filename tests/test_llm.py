@@ -158,6 +158,7 @@ class TestScriptwriter:
             mock_llm.generate_json.return_value = mock_raw
             mock_settings.data_dir = str(tmp_path)
             mock_settings.llm_max_retries = 3
+            mock_settings.target_duration_sec = 60
 
             script = write_episode_script(1)
 

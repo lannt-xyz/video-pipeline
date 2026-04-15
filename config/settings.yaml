@@ -8,7 +8,7 @@ chapters_per_episode: 5
 ollama_url: "http://localhost:11434"
 comfyui_url: "http://localhost:8188"
 
-# LLM configuration
+# LLM configuration qwen3.5:cloud
 llm_model: "gemma4-32k:latest"
 llm_timeout: 120
 llm_max_retries: 3
@@ -34,6 +34,12 @@ shot_duration_sec: 6
 # Audio
 tts_voice: "vi-VN-HoaiMyNeural"
 bgm_volume_db: -15
+
+# Multi-frame & motion settings
+frames_per_shot: 2              # images per shot (1 = legacy, 2 = multi-frame)
+crossfade_duration: 0.5         # seconds, crossfade between frames within a shot
+shot_transition_duration: 0.3   # seconds, transition between shots
+shot_transition_type: "dissolve" # FFmpeg xfade transition type
 
 # Pipeline feature flags
 enable_svd: false

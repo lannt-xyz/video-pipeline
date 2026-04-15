@@ -75,8 +75,8 @@ class TestGenerateSrt:
         generate_srt(shots, srt_path, intro_duration=0.0)
 
         content = srt_path.read_text(encoding="utf-8")
-        # Shot 2 starts at 6s
-        assert "00:00:06,000 --> 00:00:12,000" in content
+        # Shot 2 starts at 6s - 0.3s transition overlap = 5.7s
+        assert "00:00:05,700 --> 00:00:11,699" in content
 
     def test_narration_appears_in_srt(self, tmp_path):
         shots = self._make_shots(1)

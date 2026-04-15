@@ -167,6 +167,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     from llm.character_extractor import load_all_characters
     from image_gen.comfyui_client import comfyui_client
     from image_gen.character_gen import generate_character_anchors, get_anchor_paths
+    from video.frame_decomposer import decompose_all_shots
 
     if dry_run:
         logger.info("[dry-run] Skipping images | episode={}", episode_num)
@@ -180,6 +181,8 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     generate_character_anchors()
 
     script = load_episode_script(episode_num)
+    # Decompose shots into multi-frame structure
+    script = script.model_copy(update={"shots": decompose_all_shots(script.shots)})
     images_dir = Path(settings.data_dir) / "images" / f"episode-{episode_num:03d}"
     images_dir.mkdir(parents=True, exist_ok=True)
 
@@ -211,13 +214,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     db.record_phase_start(episode_num, "images")
 
     for idx, shot in enumerate(script.shots):
-        output_path = images_dir / f"shot-{idx:02d}.png"
-        if output_path.exists():
-            logger.debug("Image exists, skipping | episode={} shot={}", episode_num, idx)
-            continue
-
-        # Alias-aware resolution: build (char_obj, anchor_paths) pairs for up to 2 characters.
-        # Always resolve anchor via canonical name to avoid slug mismatch with aliases.
+        # Resolve character anchors once per shot (shared across all frames)
         char_anchor_pairs = []
         for name in shot.characters[:2]:
             char_obj = _find_character(name, characters_map)
@@ -238,64 +235,77 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             else _negative_base
         )
 
-        if len(char_anchor_pairs) >= 2:
-            # Dual IPAdapter — two characters with valid anchors
-            # Text prompt = ONLY scene tags + gender count. NO character DNA tags.
-            # IPAdapter image reference is the sole authority on character appearance.
-            genders = [c.gender if c else "male" for c, _ in char_anchor_pairs]
-            count_tag = (
-                "2boys" if all(g == "male" for g in genders)
-                else "2girls" if all(g == "female" for g in genders)
-                else "1boy, 1girl"
-            )
-            workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
-            # Use first anchor view for each character (front view = strongest identity)
-            replacements = {
-                "SCENE_PROMPT": f"{count_tag}, {shot.scene_prompt}",
-                "NEGATIVE_PROMPT": negative,
-                "WIDTH": settings.image_width,
-                "HEIGHT": settings.image_height,
-                "SEED": episode_num * 1000 + idx,
-                "ANCHOR_PATH": char_anchor_pairs[0][1][0],
-                "ANCHOR_PATH_2": char_anchor_pairs[1][1][0],
-            }
-        elif len(char_anchor_pairs) == 1:
-            # Single IPAdapter — text prompt = scene tags + gender only.
-            # NO character DNA tags — IPAdapter image handles appearance.
-            # Pass all anchor views for IPAdapterBatch averaging.
-            char_obj, anchors = char_anchor_pairs[0]
-            gender_tag = "1girl" if (char_obj and char_obj.gender == "female") else "1boy"
-            workflow = "image_gen/workflows/txt2img_ipadapter.json"
-            replacements = {
-                "SCENE_PROMPT": f"{gender_tag}, {shot.scene_prompt}",
-                "NEGATIVE_PROMPT": negative,
-                "WIDTH": settings.image_width,
-                "HEIGHT": settings.image_height,
-                "SEED": episode_num * 1000 + idx,
-                "ANCHOR_PATH": anchors[0],
-            }
-            # Add extra anchor views if available
-            if len(anchors) > 1:
-                replacements["ANCHOR_PATH_2"] = anchors[1]
-                workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
-            if len(anchors) > 2:
-                replacements["ANCHOR_PATH_3"] = anchors[2]
-        else:
-            # Scene-only: no characters listed, or all anchors missing
-            workflow = "image_gen/workflows/txt2img_scene.json"
-            replacements = {
-                "SCENE_PROMPT": shot.scene_prompt,
-                "NEGATIVE_PROMPT": negative,
-                "WIDTH": settings.image_width,
-                "HEIGHT": settings.image_height,
-                "SEED": episode_num * 1000 + idx,
-            }
+        # Generate each frame for this shot
+        frames = shot.frames if shot.frames else [None]
+        for fidx, frame in enumerate(frames):
+            # Use frame-aware path when multi-frame, legacy path when single frame
+            if len(frames) > 1:
+                output_path = images_dir / f"shot-{idx:02d}-frame-{fidx:02d}.png"
+            else:
+                output_path = images_dir / f"shot-{idx:02d}.png"
 
-        comfyui_client.generate_image(workflow, replacements, output_path)
-        logger.info(
-            "Image generated | episode={} shot={} workflow={}",
-            episode_num, idx, Path(workflow).stem,
-        )
+            if output_path.exists():
+                logger.debug(
+                    "Image exists, skipping | episode={} shot={} frame={}",
+                    episode_num, idx, fidx,
+                )
+                continue
+
+            # Use frame.scene_prompt (with camera_tag prepended) if available,
+            # otherwise fall back to shot.scene_prompt
+            prompt_text = frame.scene_prompt if frame else shot.scene_prompt
+            # Unique seed per frame to ensure visual variety
+            seed = episode_num * 10000 + idx * 100 + fidx
+
+            if len(char_anchor_pairs) >= 2:
+                genders = [c.gender if c else "male" for c, _ in char_anchor_pairs]
+                count_tag = (
+                    "2boys" if all(g == "male" for g in genders)
+                    else "2girls" if all(g == "female" for g in genders)
+                    else "1boy, 1girl"
+                )
+                workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
+                replacements = {
+                    "SCENE_PROMPT": f"{count_tag}, {prompt_text}",
+                    "NEGATIVE_PROMPT": negative,
+                    "WIDTH": settings.image_width,
+                    "HEIGHT": settings.image_height,
+                    "SEED": seed,
+                    "ANCHOR_PATH": char_anchor_pairs[0][1][0],
+                    "ANCHOR_PATH_2": char_anchor_pairs[1][1][0],
+                }
+            elif len(char_anchor_pairs) == 1:
+                char_obj, anchors = char_anchor_pairs[0]
+                gender_tag = "1girl" if (char_obj and char_obj.gender == "female") else "1boy"
+                workflow = "image_gen/workflows/txt2img_ipadapter.json"
+                replacements = {
+                    "SCENE_PROMPT": f"{gender_tag}, {prompt_text}",
+                    "NEGATIVE_PROMPT": negative,
+                    "WIDTH": settings.image_width,
+                    "HEIGHT": settings.image_height,
+                    "SEED": seed,
+                    "ANCHOR_PATH": anchors[0],
+                }
+                if len(anchors) > 1:
+                    replacements["ANCHOR_PATH_2"] = anchors[1]
+                    workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
+                if len(anchors) > 2:
+                    replacements["ANCHOR_PATH_3"] = anchors[2]
+            else:
+                workflow = "image_gen/workflows/txt2img_scene.json"
+                replacements = {
+                    "SCENE_PROMPT": prompt_text,
+                    "NEGATIVE_PROMPT": negative,
+                    "WIDTH": settings.image_width,
+                    "HEIGHT": settings.image_height,
+                    "SEED": seed,
+                }
+
+            comfyui_client.generate_image(workflow, replacements, output_path)
+            logger.info(
+                "Image generated | episode={} shot={} frame={} workflow={}",
+                episode_num, idx, fidx, Path(workflow).stem,
+            )
 
     # Thumbnail for first key shot
     key_indices = [i for i, s in enumerate(script.shots) if s.is_key_shot]
@@ -371,6 +381,7 @@ def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     from llm.scriptwriter import load_episode_script
     from video.assembler import assemble_shot_clips
     from video.editor import assemble_episode
+    from video.frame_decomposer import decompose_all_shots
 
     if dry_run:
         logger.info("[dry-run] Skipping video | episode={}", episode_num)
@@ -378,6 +389,8 @@ def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
         return
 
     script = load_episode_script(episode_num)
+    # Decompose shots into frames (same logic as run_images)
+    script = script.model_copy(update={"shots": decompose_all_shots(script.shots)})
     audio_dir = Path(settings.data_dir) / "audio" / f"episode-{episode_num:03d}"
     audio_paths = [
         audio_dir / f"shot-{i:02d}-mixed.aac" for i in range(len(script.shots))

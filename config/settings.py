@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     tts_voice: str = "vi-VN-HoaiMyNeural"
     bgm_volume_db: int = -15
 
+    # Multi-frame & motion
+    frames_per_shot: int = 2
+    crossfade_duration: float = 0.5
+    shot_transition_duration: float = 0.3
+    shot_transition_type: str = "dissolve"
+
     # Feature flags
     enable_svd: bool = False
 

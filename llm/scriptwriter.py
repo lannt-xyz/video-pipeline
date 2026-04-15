@@ -8,7 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from config.settings import settings
 from llm.client import ollama_client
 from llm.summarizer import load_arc_overview
-from models.schemas import EpisodeScript, ShotScript
+from models.schemas import CameraFlow, EpisodeScript, ShotScript
 
 _SCRIPTWRITER_SYSTEM = """You are a Vietnamese short video scriptwriter for TikTok/YouTube Shorts.
 You will receive ORDERED SCENES — story events in exact chronological order.
@@ -44,9 +44,47 @@ NARRATIVE RULES (most critical):
 - Voice: first-person narrator ("Tôi..."), present-tense tension.
 - FORBIDDEN phrases: "mọi chuyện leo thang", "những bí ẩn được hé lộ", "cuộc chiến tiếp tục", "các nhân vật xuất hiện".
 
+CAMERA FLOW — Choose the right camera movement for each shot:
+- "wide_to_close": Camera starts wide, zooms to close-up. Use for dialogue, narrative exposition, showing environment then focusing on character.
+- "close_to_wide": Camera starts close, pulls back to reveal wider scene. Use for twists, revelations, surprise reveals.
+- "pan_across": Camera pans horizontally across the scene. Use for action/fight sequences, chases, showing multiple characters engaging.
+- "detail_reveal": Extreme close-up on a detail, then pulls to medium shot. Use for horror, mystery, discovering clues, creepy objects.
+- "static_close": Single close-up frame, no movement needed. Use ONLY for hook shots (shots 1-2, duration ≤3s).
+- "static_wide": Single wide frame. Use ONLY for brief establishing scene-only shots with no characters.
+
+CAMERA FLOW GUIDELINES:
+- Shot 1 (hook): MUST be "static_close" or "detail_reveal"
+- Shot 2 (hook): MUST be "static_close" or "wide_to_close"
+- Action/fight shots: prefer "pan_across"
+- Twist/revelation shots: prefer "close_to_wide"
+- Horror/discovery shots: prefer "detail_reveal"
+- Standard narrative/dialogue: prefer "wide_to_close"
+- Shot 8 (cliffhanger): prefer "detail_reveal" or "close_to_wide"
+
 SCENE PROMPT RULES — CRITICAL: ComfyUI uses Stable Diffusion, which requires comma-separated tags, NOT sentences.
 scene_prompt must be a SHORT TAG LIST only. Structure:
-  [location tags], [action/pose tags], [atmosphere/lighting tags], anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks
+  [specific location], [specific action/pose], [foreground element], [background element], [specific lighting], anime style, manhua art style, no text, no watermarks
+
+SCENE PROMPT QUALITY — Each scene_prompt MUST contain ALL of the following:
+1. At least 1 SPECIFIC LOCATION tag (NOT generic): "dimly lit coffin shop with wooden shelves", NOT just "coffin shop interior"
+2. At least 1 SPECIFIC ACTION or POSE tag: "figure lunging forward with wooden staff", NOT just "action pose" or "fighting"
+3. At least 1 FOREGROUND ELEMENT: something close to camera — "cracked stone tablet", "glowing talisman in hand", "overturned wooden chair"
+4. At least 1 BACKGROUND ELEMENT: environmental depth — "distant mountain peaks shrouded in fog", "torches lining corridor walls", "moonlit graveyard silhouettes"
+5. SPECIFIC LIGHTING description: "dim oil lantern casting long shadows on walls", NOT just "dramatic lighting"
+
+SCENE PROMPT EXAMPLES:
+WRONG: "coffin shop interior, intense fight scene, wooden shelves, dim lantern light, dynamic action pose, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
+→ Problems: "intense fight scene" is vague (WHO doing WHAT?), "dynamic action pose" is generic, "dramatic lighting" has no specifics
+
+RIGHT: "dimly lit coffin shop with hanging red paper, figure lunging forward with wooden sword, shattered pottery on floor, rows of dark coffins receding into shadow, flickering oil lamp casting long orange shadows, anime style, manhua art style, no text, no watermarks"
+
+WRONG: "mountain monastery courtyard, daoist training, morning mist, stone staircase, bamboo grove, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
+→ Problems: "daoist training" is too vague, no foreground object, "dramatic lighting" not specific
+
+RIGHT: "stone courtyard at mountain temple summit, figure in meditation stance with hands raised, crumbling stone incense burner in foreground, bamboo forest and mist-covered peaks in background, pale golden dawn light filtering through clouds, anime style, manhua art style, no text, no watermarks"
+
+WRONG: "outdoor gravesite, ancient tomb excavation, night scene, eerie moonlight, dark soil, stone ruins, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
+RIGHT: "muddy excavation pit with exposed stone sarcophagus, figure kneeling and prying open stone lid, scattered ritual candles on wet earth, ancient crumbling gateway half-buried behind, cold blue moonlight with drifting fog wisps, anime style, manhua art style, no text, no watermarks"
 
 FORBIDDEN in scene_prompt:
 - English sentences or clauses ("He walks into...", "Fifteen years later...")
@@ -55,6 +93,7 @@ FORBIDDEN in scene_prompt:
 - Character appearance descriptors (age, hair, eyes, physique, clothing of specific characters) — e.g., "old daoist", "black-haired girl", "young man in white robes". Use role/action tags instead: "daoist figure", "warrior silhouette", "female protagonist"
 - Adverbs or qualifiers ("mysteriously", "fiercely", "inadvertently")
 - NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, skinny, undressing, erotic, sensual, mysterious aura, bedroom eyes
+- Generic placeholder tags: "dramatic lighting", "detailed background", "action pose", "fight scene" — be SPECIFIC
 
 CLOTHING SAFETY RULE — CRITICAL for all scene_prompt:
 - Every scene_prompt with a human figure MUST include at least 2 of: fully clothed, high collar, long sleeves, covered body, modest clothing, traditional attire, armored, formal wear.
@@ -62,19 +101,12 @@ CLOTHING SAFETY RULE — CRITICAL for all scene_prompt:
 - Prepend every scene_prompt with: "sfw, fully clothed, "
 
 REQUIRED in scene_prompt:
-- At least 1 specific LOCATION tag: "university corridor", "abandoned building interior", "mountain temple courtyard", "city street at night", "coffin shop interior", "rooftop night"
-- At least 1 ACTION or ATMOSPHERE tag
-- End ALWAYS with: "anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
-
-EXAMPLES:
-WRONG: "A mysterious man excavates a newly discovered tomb in the sacred Diệp gia village at night."
-RIGHT: "outdoor gravesite, ancient tomb excavation, night scene, eerie moonlight, dark soil, stone ruins, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
-
-WRONG: "Fifteen years later, Diệp Thiếu Dương returns to Mao Sơn to continue learning Daoist arts from Thanh Vân Tử."
-RIGHT: "mountain monastery courtyard, daoist training, morning mist, stone staircase, bamboo grove, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
-
-WRONG: "At the coffin shop, Diệp Thiếu Dương fiercely fights a white zombie using the Willow Wood Sword."
-RIGHT: "coffin shop interior, intense fight scene, wooden shelves, dim lantern light, dynamic action pose, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
+- At least 1 specific LOCATION tag with visual detail
+- At least 1 specific ACTION or POSE tag with object/weapon/gesture
+- At least 1 foreground element (close to camera)
+- At least 1 background element (depth/environment)
+- At least 1 specific lighting description
+- End ALWAYS with: "anime style, manhua art style, no text, no watermarks"
 
 OTHER RULES:
 - duration_sec: 2 or 3 for shots 1–2; 6 for standard shots, 8 for climactic action shots.
@@ -84,9 +116,10 @@ OTHER RULES:
 Return JSON:
 {
   "title": "string — episode title in Vietnamese",
-  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": [] } ]
+  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": [], "camera_flow": "wide_to_close" } ]
 }
-shots MUST have EXACTLY 8 elements. EXACTLY 2-3 must have is_key_shot=true."""
+shots MUST have EXACTLY 8 elements. EXACTLY 2-3 must have is_key_shot=true.
+camera_flow MUST be one of: "wide_to_close", "close_to_wide", "pan_across", "detail_reveal", "static_close", "static_wide"."""
 
 
 _HOOK_SYSTEM = """You are a Vietnamese short video scriptwriter for TikTok/YouTube Shorts.
@@ -97,10 +130,12 @@ RULES:
 - Keep chronological order — do NOT flash-forward. Reframe the very first scene from a shocking angle.
 - narration_text MUST be 10 words or fewer.
 - scene_prompt: comma-separated tags for Stable Diffusion (English only, no character names, no sentences).
-- scene_prompt MUST end with: "anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
+- scene_prompt MUST contain: 1 specific location with detail, 1 specific action/pose, 1 foreground element, 1 background element, 1 specific lighting.
+- scene_prompt MUST end with: "anime style, manhua art style, no text, no watermarks"
+- camera_flow: MUST be "static_close" or "detail_reveal" for hook shots.
 
 Return JSON:
-{ "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": [] }"""
+{ "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": [], "camera_flow": "static_close" }"""
 
 
 @retry(
@@ -234,6 +269,7 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _normalize_duration(episode_shots, episode_num)
     episode_shots = _normalize_hook_durations(episode_shots, episode_num)
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
+    episode_shots = _normalize_camera_flow(episode_shots, episode_num)
 
     script = EpisodeScript(
         episode_num=episode_num,
@@ -346,4 +382,23 @@ def _normalize_key_shots(shots: List[ShotScript], episode_num: int) -> List[Shot
                 else:
                     count += 1
 
+    return shots
+
+
+def _normalize_camera_flow(shots: List[ShotScript], episode_num: int) -> List[ShotScript]:
+    """Ensure camera_flow is set correctly based on shot position and type.
+    - Shots 0-1 (hooks, ≤3s): force static_close if not already static_close or detail_reveal
+    - Last shot (cliffhanger): prefer close_to_wide for reveal effect
+    """
+    shots = list(shots)
+    for i in range(len(shots)):
+        shot = shots[i]
+        # Hook shots should be static or detail_reveal
+        if i <= 1 and shot.duration_sec <= 3:
+            if shot.camera_flow not in (CameraFlow.STATIC_CLOSE, CameraFlow.DETAIL_REVEAL):
+                shots[i] = shot.model_copy(update={"camera_flow": CameraFlow.STATIC_CLOSE})
+        # Last shot (cliffhanger) benefits from reveal
+        elif i == len(shots) - 1:
+            if shot.camera_flow == CameraFlow.WIDE_TO_CLOSE:
+                shots[i] = shot.model_copy(update={"camera_flow": CameraFlow.CLOSE_TO_WIDE})
     return shots
