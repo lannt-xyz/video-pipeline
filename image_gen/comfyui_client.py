@@ -131,10 +131,13 @@ class ComfyUIClient:
 
     def upload_image(self, path: Path) -> str:
         """Upload a local image to ComfyUI /upload/image. Returns the filename as known to ComfyUI."""
+        # Use parent_dir+filename as upload name to prevent ComfyUI cache collisions
+        # when multiple characters all have "anchor.png" (e.g. thanh_van_tu_anchor.png).
+        unique_name = f"{path.parent.name}_{path.name}" if path.parent.name else path.name
         with open(path, "rb") as f:
             resp = httpx.post(
                 f"{self.base_url}/upload/image",
-                files={"image": (path.name, f, "image/png")},
+                files={"image": (unique_name, f, "image/png")},
                 data={"type": "input", "overwrite": "true"},
                 timeout=30.0,
             )

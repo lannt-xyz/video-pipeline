@@ -1,20 +1,23 @@
 {
   "_meta": {
-    "description": "SDXL txt2img with IPAdapter PLUS FACE for anime character identity transfer. Uses CLIP-vision face-focused model — text prompt should contain ONLY scene tags, NO character appearance tags.",
+    "description": "SDXL txt2img with IPAdapter PLUS FACE using multiple reference images (2-3 views) averaged via IPAdapterBatch for stronger character identity. Text prompt = scene tags only.",
     "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
     "ipadapter": "ip-adapter-plus-face_sdxl_vit-h.safetensors",
     "placeholders": {
-      "SCENE_PROMPT": "Positive prompt in English",
+      "SCENE_PROMPT": "Positive prompt in English (scene only, no character tags)",
       "NEGATIVE_PROMPT": "Negative prompt",
       "WIDTH": 720,
       "HEIGHT": 1280,
       "SEED": 42,
-      "ANCHOR_PATH": "character_slug_anchor.png"
+      "ANCHOR_PATH": "front_view_anchor.png",
+      "ANCHOR_PATH_2": "3q_view_anchor.png",
+      "ANCHOR_PATH_3": "(optional) side_view_anchor.png"
     },
     "required_nodes": [
       "CheckpointLoaderSimple", "LoraLoader", "CLIPTextEncode", "KSampler",
       "VAEDecode", "SaveImage", "IPAdapterUnifiedLoader",
-      "IPAdapterAdvanced", "PrepImageForClipVision", "LoadImage"
+      "IPAdapterAdvanced", "PrepImageForClipVision", "LoadImage",
+      "ImageBatch"
     ]
   },
   "1": {
@@ -70,19 +73,63 @@
       "preset": "PLUS FACE (portraits)"
     }
   },
-  "17": {
+  "20": {
     "class_type": "LoadImage",
     "inputs": {
       "image": "__ANCHOR_PATH__"
     }
   },
-  "15": {
+  "21": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_PATH_2__"
+    }
+  },
+  "22": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_PATH_3__"
+    }
+  },
+  "23": {
     "class_type": "PrepImageForClipVision",
     "inputs": {
-      "image": ["17", 0],
+      "image": ["20", 0],
       "interpolation": "LANCZOS",
       "crop_position": "center",
       "sharpening": 0.0
+    }
+  },
+  "24": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": ["21", 0],
+      "interpolation": "LANCZOS",
+      "crop_position": "center",
+      "sharpening": 0.0
+    }
+  },
+  "25": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": ["22", 0],
+      "interpolation": "LANCZOS",
+      "crop_position": "center",
+      "sharpening": 0.0
+    }
+  },
+  "26": {
+    "class_type": "ImageBatch",
+    "inputs": {
+      "image1": ["23", 0],
+      "image2": ["24", 0]
+    }
+  },
+  "27": {
+    "class_type": "ImageBatch",
+    "inputs": {
+      "image1": ["26", 0],
+      "image2": ["25", 0]
     }
   },
   "8": {
@@ -90,10 +137,10 @@
     "inputs": {
       "model": ["6", 0],
       "ipadapter": ["6", 1],
-      "image": ["15", 0],
+      "image": ["27", 0],
       "weight": 0.85,
       "weight_type": "style and composition",
-      "combine_embeds": "concat",
+      "combine_embeds": "average",
       "start_at": 0.0,
       "end_at": 0.85,
       "embeds_scaling": "K+V w/ C penalty"
@@ -147,7 +194,7 @@
     "class_type": "SaveImage",
     "inputs": {
       "images": ["13", 0],
-      "filename_prefix": "character_shot"
+      "filename_prefix": "character_shot_multiref"
     }
   }
 }

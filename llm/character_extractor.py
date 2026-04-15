@@ -50,8 +50,16 @@ MANDATORY RULES:
    Safe male styles: short hair, buzz cut, side part, low bun, tied back
 
 6. Description must contain ONLY visual tags. Remove all abstract/personality words:
-   FORBIDDEN: mysterious aura, calculating, weathered feeling, spiritual energy, symbolizing, exudes, scholar's aura, ethereal
-   REPLACE WITH visual equivalents: serious expression, sharp eyes, wrinkled face, looking at viewer
+   FORBIDDEN: mysterious aura, mysterious, scholar, scholar's aura, calculating, weathered feeling, spiritual energy, symbolizing, exudes, ethereal, elegant aura, noble aura, cold aura, dangerous aura, manipulative, cunning aura
+   REPLACE WITH visual equivalents: serious expression, sharp eyes, wrinkled face, cold expression, looking at viewer
+
+7. Female character SAFETY rules — critical to prevent AI from generating monsters or males:
+   - ALWAYS start female characters with: 1girl, solo
+   - NEVER use tags that trigger male anatomy: masculine, muscular, broad shoulders, armor, horns, wings, claws
+   - FORBIDDEN soft tags on 1girl: mysterious, scholar, ethereal, revealing, revealing outfit, bare shoulders
+   - REQUIRED on every 1girl description: at least 2 of: fully clothed, high collar, long sleeves, traditional attire, modern casual wear, formal wear
+   - If character wears traditional clothes: use "traditional chinese clothing, fully clothed, high collar"
+   - If character wears modern clothes: use "blouse, dark skirt, modern casual wear" — no skin-exposure tags
 
 EXAMPLES:
 Modern male ghost hunter: "1boy, solo, short black hair, side part, dark brown eyes, sharp eyes, dark jacket, dark pants, talisman in hand, athletic build, serious expression, urban background"

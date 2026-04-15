@@ -52,6 +52,7 @@ FORBIDDEN in scene_prompt:
 - English sentences or clauses ("He walks into...", "Fifteen years later...")
 - Vietnamese words anywhere
 - Character names (Diệp Thiếu Dương, Tiểu Mã, etc.) — character appearance is handled separately
+- Character appearance descriptors (age, hair, eyes, physique, clothing of specific characters) — e.g., "old daoist", "black-haired girl", "young man in white robes". Use role/action tags instead: "daoist figure", "warrior silhouette", "female protagonist"
 - Adverbs or qualifiers ("mysteriously", "fiercely", "inadvertently")
 - NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, skinny, undressing, erotic, sensual, mysterious aura, bedroom eyes
 

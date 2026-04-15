@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "SDXL txt2img with IPAdapter PLUS FACE for anime character identity transfer. Uses CLIP-vision face-focused model — text prompt should contain ONLY scene tags, NO character appearance tags.",
+    "description": "SDXL txt2img with dual IPAdapter PLUS FACE for 2-character scenes. Text prompt should contain ONLY scene tags + gender count, NO character appearance tags.",
     "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
     "ipadapter": "ip-adapter-plus-face_sdxl_vit-h.safetensors",
     "placeholders": {
@@ -9,7 +9,8 @@
       "WIDTH": 720,
       "HEIGHT": 1280,
       "SEED": 42,
-      "ANCHOR_PATH": "character_slug_anchor.png"
+      "ANCHOR_PATH": "char1_slug_anchor.png",
+      "ANCHOR_PATH_2": "char2_slug_anchor.png"
     },
     "required_nodes": [
       "CheckpointLoaderSimple", "LoraLoader", "CLIPTextEncode", "KSampler",
@@ -76,10 +77,25 @@
       "image": "__ANCHOR_PATH__"
     }
   },
+  "18": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_PATH_2__"
+    }
+  },
   "15": {
     "class_type": "PrepImageForClipVision",
     "inputs": {
       "image": ["17", 0],
+      "interpolation": "LANCZOS",
+      "crop_position": "center",
+      "sharpening": 0.0
+    }
+  },
+  "19": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": ["18", 0],
       "interpolation": "LANCZOS",
       "crop_position": "center",
       "sharpening": 0.0
@@ -91,7 +107,21 @@
       "model": ["6", 0],
       "ipadapter": ["6", 1],
       "image": ["15", 0],
-      "weight": 0.85,
+      "weight": 0.7,
+      "weight_type": "style and composition",
+      "combine_embeds": "concat",
+      "start_at": 0.0,
+      "end_at": 0.85,
+      "embeds_scaling": "K+V w/ C penalty"
+    }
+  },
+  "16": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "model": ["8", 0],
+      "ipadapter": ["6", 1],
+      "image": ["19", 0],
+      "weight": 0.7,
       "weight_type": "style and composition",
       "combine_embeds": "concat",
       "start_at": 0.0,
@@ -124,7 +154,7 @@
   "12": {
     "class_type": "KSampler",
     "inputs": {
-      "model": ["8", 0],
+      "model": ["16", 0],
       "positive": ["9", 0],
       "negative": ["10", 0],
       "latent_image": ["11", 0],
@@ -147,7 +177,7 @@
     "class_type": "SaveImage",
     "inputs": {
       "images": ["13", 0],
-      "filename_prefix": "character_shot"
+      "filename_prefix": "character_shot_dual"
     }
   }
 }

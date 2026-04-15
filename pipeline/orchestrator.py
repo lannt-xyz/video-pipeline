@@ -128,11 +128,45 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     db.set_episode_status(episode_num, "SCRIPTED")
 
 
+# Tags that describe outfit / accessories / background — excluded from identity (DNA) prompt
+_OUTFIT_KEYWORDS = frozenset([
+    "jacket", "pants", "robe", "robes", "dress", "blouse", "skirt", "shirt",
+    "coat", "hanfu", "clothing", "wear", "outfit", "attire", "suit", "uniform",
+    "apron", "talisman", "staff", "sword", "weapon", "beads", "in hand",
+    "incense", "background", "setting", "lighting", "indoor", "outdoor",
+    "standing", "sitting", "holding", "looking",
+    # Count/group Danbooru tags — managed per-scene, not per-character
+    "solo", "1boy", "1girl", "2boys", "2girls",
+    # Profession/role tags — semantic, not physical identity
+    "craftsman", "carpenter", "daoist master", "daoist priest",
+    "ghost hunter", "cultivator", "monk", "elder",
+    # Personality/trait tags — not visual
+    "determined",
+    # Framing/composition — scene-dependent
+    "full body", "upper body",
+])
+
+
+def _find_character(llm_name: str, characters_map: dict):
+    """Alias-aware lookup — match on canonical name or any alias."""
+    for char_obj in characters_map.values():
+        if llm_name == char_obj.name or llm_name in char_obj.alias:
+            return char_obj
+    return None
+
+
+def _extract_dna_tags(description: str) -> str:
+    """Keep only identity tags (gender/hair/eyes/face/body) — drop outfit/accessory/background tags."""
+    tags = [t.strip() for t in description.split(",") if t.strip()]
+    dna = [t for t in tags if not any(kw in t.lower() for kw in _OUTFIT_KEYWORDS)]
+    return ", ".join(dna)
+
+
 def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     from llm.scriptwriter import load_episode_script
     from llm.character_extractor import load_all_characters
     from image_gen.comfyui_client import comfyui_client
-    from image_gen.character_gen import generate_character_anchors, get_anchor_path
+    from image_gen.character_gen import generate_character_anchors, get_anchor_paths
 
     if dry_run:
         logger.info("[dry-run] Skipping images | episode={}", episode_num)
@@ -152,15 +186,18 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     # Build name→description map for reinforcing IP-Adapter with text tags
     characters_map = {c.name: c for c in load_all_characters()}
 
-    negative = (
+    _negative_base = (
         # Hard NSFW block — must come first for PonyXL
         "nsfw, nudity, naked, nude, nipples, pussy, penis, genitals, "
         "underwear, lingerie, bikini, swimsuit, cleavage, navel, bare skin, "
         "undressing, topless, bottomless, lewd, ecchi, explicit, uncensored, "
         "(nsfw:1.5), (nudity:1.5), (naked:1.5), "
+        # Monster / non-human anatomy block — prevents horns, armor, wings
+        "(horn:1.5), (horns:1.5), (armor:1.5), (wings:1.5), (monster:1.5), "
+        "(tail:1.3), (claws:1.3), (fangs:1.3), demon, beast, creature, "
         # Dangerous soft tags that PonyXL associates with NSFW
         "alluring, seductive, suggestive, provocative, erotic, sensual, "
-        "mysterious aura, bedroom eyes, "
+        "mysterious aura, bedroom eyes, revealing outfit, "
         # PonyDiffusion quality anti-tags
         "score_1, score_2, score_3, score_4, score_5, "
         # Text / watermark — prevents manga SFX, speech bubbles, captions
@@ -179,36 +216,72 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             logger.debug("Image exists, skipping | episode={} shot={}", episode_num, idx)
             continue
 
-        if shot.characters:
-            anchor = get_anchor_path(shot.characters[0])
-            if not anchor.exists():
-                logger.warning(
-                    "Anchor missing, falling back to scene workflow | episode={} shot={} char={}",
-                    episode_num, idx, shot.characters[0],
-                )
-                workflow = "image_gen/workflows/txt2img_scene.json"
-                replacements = {
-                    "SCENE_PROMPT": shot.scene_prompt,
-                    "NEGATIVE_PROMPT": negative,
-                    "WIDTH": settings.image_width,
-                    "HEIGHT": settings.image_height,
-                    "SEED": episode_num * 1000 + idx,
-                }
+        # Alias-aware resolution: build (char_obj, anchor_paths) pairs for up to 2 characters.
+        # Always resolve anchor via canonical name to avoid slug mismatch with aliases.
+        char_anchor_pairs = []
+        for name in shot.characters[:2]:
+            char_obj = _find_character(name, characters_map)
+            anchors = get_anchor_paths(char_obj.name if char_obj else name)
+            if anchors:
+                char_anchor_pairs.append((char_obj, anchors))
             else:
-                # Prepend character description tags so text prompt reinforces IP-Adapter anchor
-                char_obj = characters_map.get(shot.characters[0])
-                char_tags = char_obj.description if char_obj else ""
-                combined_prompt = f"{char_tags}, {shot.scene_prompt}" if char_tags else shot.scene_prompt
-                workflow = "image_gen/workflows/txt2img_ipadapter.json"
-                replacements = {
-                    "SCENE_PROMPT": combined_prompt,
-                    "NEGATIVE_PROMPT": negative,
-                    "WIDTH": settings.image_width,
-                    "HEIGHT": settings.image_height,
-                    "SEED": episode_num * 1000 + idx,
-                    "ANCHOR_PATH": anchor,
-                }
+                logger.warning(
+                    "Anchor missing, skipping IPAdapter for this char | episode={} shot={} char={}",
+                    episode_num, idx, char_obj.name if char_obj else name,
+                )
+
+        # Gender-aware negative: block male anatomy on female characters
+        has_female = any(c is not None and c.gender == "female" for c, _ in char_anchor_pairs)
+        negative = (
+            _negative_base + ", (male:1.5), (masculine:1.3), 1boy"
+            if has_female
+            else _negative_base
+        )
+
+        if len(char_anchor_pairs) >= 2:
+            # Dual IPAdapter — two characters with valid anchors
+            # Text prompt = ONLY scene tags + gender count. NO character DNA tags.
+            # IPAdapter image reference is the sole authority on character appearance.
+            genders = [c.gender if c else "male" for c, _ in char_anchor_pairs]
+            count_tag = (
+                "2boys" if all(g == "male" for g in genders)
+                else "2girls" if all(g == "female" for g in genders)
+                else "1boy, 1girl"
+            )
+            workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
+            # Use first anchor view for each character (front view = strongest identity)
+            replacements = {
+                "SCENE_PROMPT": f"{count_tag}, {shot.scene_prompt}",
+                "NEGATIVE_PROMPT": negative,
+                "WIDTH": settings.image_width,
+                "HEIGHT": settings.image_height,
+                "SEED": episode_num * 1000 + idx,
+                "ANCHOR_PATH": char_anchor_pairs[0][1][0],
+                "ANCHOR_PATH_2": char_anchor_pairs[1][1][0],
+            }
+        elif len(char_anchor_pairs) == 1:
+            # Single IPAdapter — text prompt = scene tags + gender only.
+            # NO character DNA tags — IPAdapter image handles appearance.
+            # Pass all anchor views for IPAdapterBatch averaging.
+            char_obj, anchors = char_anchor_pairs[0]
+            gender_tag = "1girl" if (char_obj and char_obj.gender == "female") else "1boy"
+            workflow = "image_gen/workflows/txt2img_ipadapter.json"
+            replacements = {
+                "SCENE_PROMPT": f"{gender_tag}, {shot.scene_prompt}",
+                "NEGATIVE_PROMPT": negative,
+                "WIDTH": settings.image_width,
+                "HEIGHT": settings.image_height,
+                "SEED": episode_num * 1000 + idx,
+                "ANCHOR_PATH": anchors[0],
+            }
+            # Add extra anchor views if available
+            if len(anchors) > 1:
+                replacements["ANCHOR_PATH_2"] = anchors[1]
+                workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
+            if len(anchors) > 2:
+                replacements["ANCHOR_PATH_3"] = anchors[2]
         else:
+            # Scene-only: no characters listed, or all anchors missing
             workflow = "image_gen/workflows/txt2img_scene.json"
             replacements = {
                 "SCENE_PROMPT": shot.scene_prompt,
@@ -219,7 +292,10 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             }
 
         comfyui_client.generate_image(workflow, replacements, output_path)
-        logger.info("Image generated | episode={} shot={}", episode_num, idx)
+        logger.info(
+            "Image generated | episode={} shot={} workflow={}",
+            episode_num, idx, Path(workflow).stem,
+        )
 
     # Thumbnail for first key shot
     key_indices = [i for i, s in enumerate(script.shots) if s.is_key_shot]
