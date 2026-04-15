@@ -87,7 +87,7 @@ def generate_ass(shots: List[ShotScript], output_path: Path, intro_duration: flo
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         # PrimaryColour=white, SecondaryColour=yellow (before kf timer), Alignment=2 bottom-center
-        "Style: Karaoke,Arial,32,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,"
+        "Style: Karaoke,Arial,52,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,"
         "-1,0,0,0,100,100,0,0,1,2.5,1.5,2,60,60,80,0\n"
         "\n"
         "[Events]\n"
