@@ -16,7 +16,8 @@ Return a JSON array of character objects with EXACTLY this schema:
   {
     "name": "string — full character name",
     "alias": ["string — alternative names or nicknames"],
-    "description": "string — detailed appearance description in English for ComfyUI (hair color, eye color, clothing style, notable features)",
+    "gender": "male or female",
+    "description": "string — detailed appearance description in English for ComfyUI. MUST start with '1boy, male' if male or '1girl, female' if female. Include hair color, eye color, clothing style, notable features.",
     "relationships": {"other_character_name": "relationship description"}
   }
 ]
@@ -46,17 +47,7 @@ def extract_all_characters() -> List[Character]:
 
     if not arc_files:
         logger.warning("No arc summary files found for character extraction")
-        # Fall back to settings characters list
-        return [
-            Character(
-                name=name,
-                description=(
-                    f"{name}, xianxia fantasy character, detailed anime style, "
-                    "manhua art style, full body"
-                ),
-            )
-            for name in settings.characters
-        ]
+        return []
 
     # Use first 10 arcs for extraction (reasonable context size)
     all_summaries = []

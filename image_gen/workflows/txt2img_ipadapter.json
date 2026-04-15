@@ -1,8 +1,9 @@
 {
   "_meta": {
-    "description": "SDXL txt2img with IPAdapter for character face consistency. Requires ComfyUI-IPAdapter-plus custom node.",
+    "description": "SDXL txt2img with IPAdapter for character consistency. Uses IPAdapterUnifiedLoader + IPAdapterAdvanced (new API).",
     "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
-    "loras": ["manhua_style_v2.safetensors", "xianxia_fantasy.safetensors", "dark_horror_atmosphere.safetensors"],
+    "ipadapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
+    "loras": ["ink_wash_painting.safetensors", "xianxia_fantasy.safetensors", "manhua_style_v2.safetensors", "dark_horror_atmosphere.safetensors"],
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
       "NEGATIVE_PROMPT": "Negative prompt",
@@ -13,7 +14,7 @@
     },
     "required_nodes": [
       "CheckpointLoaderSimple", "LoraLoader", "CLIPTextEncode", "KSampler",
-      "VAEDecode", "SaveImage", "IPAdapterModelLoader", "IPAdapterApply",
+      "VAEDecode", "SaveImage", "IPAdapterUnifiedLoader", "IPAdapterAdvanced",
       "LoadImage"
     ]
   },
@@ -28,9 +29,9 @@
     "inputs": {
       "model": ["1", 0],
       "clip": ["1", 1],
-      "lora_name": "manhua_style_v2.safetensors",
-      "strength_model": 0.7,
-      "strength_clip": 0.7
+      "lora_name": "ink_wash_painting.safetensors",
+      "strength_model": 0.6,
+      "strength_clip": 0.6
     }
   },
   "3": {
@@ -48,21 +49,28 @@
     "inputs": {
       "model": ["3", 0],
       "clip": ["3", 1],
+      "lora_name": "manhua_style_v2.safetensors",
+      "strength_model": 0.7,
+      "strength_clip": 0.7
+    }
+  },
+  "5": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": ["4", 0],
+      "clip": ["4", 1],
       "lora_name": "dark_horror_atmosphere.safetensors",
       "strength_model": 0.4,
       "strength_clip": 0.4
     }
   },
-  "5": {
-    "class_type": "IPAdapterModelLoader",
-    "inputs": {
-      "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"
-    }
-  },
   "6": {
-    "class_type": "CLIPVisionLoader",
+    "class_type": "IPAdapterUnifiedLoader",
     "inputs": {
-      "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+      "model": ["5", 0],
+      "preset": "PLUS (high strength)",
+      "lora_strength": 0.0,
+      "provider": "CPU"
     }
   },
   "7": {
@@ -72,32 +80,31 @@
     }
   },
   "8": {
-    "class_type": "IPAdapterApply",
+    "class_type": "IPAdapterAdvanced",
     "inputs": {
-      "ipadapter": ["5", 0],
-      "clip_vision": ["6", 0],
+      "model": ["6", 0],
+      "ipadapter": ["6", 1],
       "image": ["7", 0],
-      "model": ["4", 0],
       "weight": 0.8,
-      "noise": 0.05,
-      "weight_type": "original",
+      "weight_type": "ease in-out",
       "start_at": 0.0,
       "end_at": 1.0,
-      "unfold_batch": false
+      "combine_embeds": "concat",
+      "embeds_scaling": "K+V w/ C penalty"
     }
   },
   "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "__SCENE_PROMPT__, score_9, score_8_up, score_7_up, masterpiece, best quality, highly detailed",
-      "clip": ["4", 1]
+      "clip": ["5", 1]
     }
   },
   "10": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "__NEGATIVE_PROMPT__, score_1, score_2, score_3, score_4, nsfw",
-      "clip": ["4", 1]
+      "clip": ["5", 1]
     }
   },
   "11": {

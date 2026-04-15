@@ -69,9 +69,6 @@ class Settings(BaseSettings):
     # Feature flags
     enable_svd: bool = False
 
-    # Characters
-    characters: List[str] = []
-
     # Paths
     data_dir: str = "data"
     db_path: str = "db/pipeline.db"

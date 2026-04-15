@@ -38,10 +38,6 @@ bgm_volume_db: -15
 # Pipeline feature flags
 enable_svd: false
 
-# Characters to generate anchor images for
-characters:
-  - "Diep Thieu Duong"
-
 # Paths (relative to project root)
 data_dir: "data"
 db_path: "db/pipeline.db"

@@ -102,6 +102,12 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     summarize_episode(episode_num, chapter_start, chapter_end)
     db.set_episode_status(episode_num, "SUMMARIZED")
 
+    # Extract characters once from arc summaries (idempotent — skips existing JSONs)
+    if episode_num == 1:
+        from llm.character_extractor import extract_all_characters
+        logger.info("Extracting characters from arc summaries")
+        extract_all_characters()
+
     logger.info("Writing script | episode={}", episode_num)
     write_episode_script(episode_num)
 
@@ -151,7 +157,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                 "WIDTH": settings.image_width,
                 "HEIGHT": settings.image_height,
                 "SEED": episode_num * 1000 + idx,
-                "ANCHOR_PATH": str(anchor),
+                "ANCHOR_PATH": anchor,
             }
         else:
             workflow = "image_gen/workflows/txt2img_scene.json"

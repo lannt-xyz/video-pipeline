@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from pathlib import Path
 
 from loguru import logger
@@ -10,7 +11,10 @@ from models.schemas import Character
 
 
 def _slugify(name: str) -> str:
-    return name.lower().replace(" ", "_").replace("-", "_")
+    # Strip diacritics (e.g. Vietnamese: "diệp thiếu dương" → "diep_thieu_duong")
+    normalized = unicodedata.normalize("NFD", name.lower())
+    ascii_name = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    return ascii_name.replace(" ", "_").replace("-", "_")
 
 _SCENE_WORKFLOW = "image_gen/workflows/txt2img_scene.json"
 
@@ -29,17 +33,8 @@ def generate_character_anchors(force: bool = False) -> None:
     characters = load_all_characters()
 
     if not characters:
-        # Bootstrap from settings characters list
-        characters = [
-            Character(
-                name=name,
-                description=(
-                    f"{name}, xianxia fantasy hero, detailed anime style, "
-                    "manhua art style, expressive face, full body portrait"
-                ),
-            )
-            for name in settings.characters
-        ]
+        logger.warning("No characters found — run LLM phase first to extract characters")
+        return
 
     for character in characters:
         _generate_single_anchor(character, force=force)

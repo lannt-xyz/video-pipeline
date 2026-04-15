@@ -36,6 +36,7 @@ class Character(BaseModel):
 
     name: str
     alias: List[str] = []
+    gender: str = "male"       # "male" | "female"
     description: str           # English appearance description for ComfyUI
     relationships: dict = {}   # { other_character_name: relationship_description }
     anchor_path: Optional[str] = None
