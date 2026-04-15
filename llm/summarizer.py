@@ -18,10 +18,16 @@ _CHUNK_SYSTEM = (
 )
 
 _ARC_SYSTEM = """You are a story analyst. Given multiple chunk summaries from consecutive story chapters, create an arc overview for this episode segment.
+
+CRITICAL: key_events MUST be written as CHRONOLOGICAL SCENE BEATS — in the exact same time order that events happen in the story.
+Each item in key_events = one specific action or scene that happens, described in 1-2 sentences.
+Do NOT merge scenes or write thematic statements. Do NOT reorder events.
+The FIRST key_event = what happens first in the story. The LAST key_event = what happens last.
+
 Return a JSON object with EXACTLY this schema:
 {
-  "arc_summary": "string — comprehensive narrative overview in Vietnamese, ~300 words",
-  "key_events": ["string — list of 5-7 key events that happened"],
+  "arc_summary": "string — brief narrative overview in Vietnamese, ~150 words",
+  "key_events": ["string — 7-9 chronological scene beats, each describing a specific action/scene in story order"],
   "characters_in_episode": ["string — list of character names who appear"]
 }"""
 
@@ -37,8 +43,11 @@ def _summarize_chunk(chapters_text: str, chunk_index: int, episode_num: int) -> 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
 def _synthesize_arc(chunk_summaries: List[str], episode_num: int) -> ArcOverview:
+    # Cap each chunk summary to avoid exceeding context window
+    _MAX_CHUNK_CHARS = 1500
+    truncated = [s[:_MAX_CHUNK_CHARS] for s in chunk_summaries]
     combined = "\n\n---\n\n".join(
-        f"Chunk {i + 1}:\n{s}" for i, s in enumerate(chunk_summaries)
+        f"Chunk {i + 1}:\n{s}" for i, s in enumerate(truncated)
     )
     prompt = f"Episode {episode_num} chunk summaries:\n\n{combined}"
     raw = ollama_client.generate_json(
@@ -56,15 +65,42 @@ def summarize_episode(
     episode_num: int, chapter_start: int, chapter_end: int
 ) -> ArcOverview:
     """Two-pass summarization for one episode.
-    Pass 1: groups of 5 chapters → chunk summaries.
-    Pass 2: chunk summaries → ArcOverview.
+    Pass 1: groups of 5 chapters → chunk summaries (skips already-saved chunks).
+    Pass 2: chunk summaries → ArcOverview (skips if arc file already exists).
     """
+    # Short-circuit: if arc already exists, skip both passes entirely
+    arc_path = (
+        Path(settings.data_dir)
+        / "summaries"
+        / f"episode-{episode_num:03d}-arc.json"
+    )
+    if arc_path.exists():
+        logger.info("Arc overview cached, skipping summarization | episode={}", episode_num)
+        return load_arc_overview(episode_num)
+
     chapters_per_chunk = 5
     chapter_nums = list(range(chapter_start, chapter_end + 1))
     chunk_summaries: List[str] = []
 
+    # Load already-saved chunk summaries to avoid re-calling LLM
+    cached_chunks: dict = {}
+    chunks_path = (
+        Path(settings.data_dir)
+        / "summaries"
+        / f"episode-{episode_num:03d}-chunks.json"
+    )
+    if chunks_path.exists():
+        for c in json.loads(chunks_path.read_text(encoding="utf-8")):
+            cached_chunks[c["chunk_index"]] = c["summary"]
+
     # Pass 1 — one summary per 5-chapter chunk
     for chunk_idx, start in enumerate(range(0, len(chapter_nums), chapters_per_chunk)):
+        # Re-use cached summary if available
+        if chunk_idx in cached_chunks:
+            chunk_summaries.append(cached_chunks[chunk_idx])
+            logger.debug("Chunk {} cached, skipping LLM | episode={}", chunk_idx, episode_num)
+            continue
+
         batch = chapter_nums[start : start + chapters_per_chunk]
         texts = []
         for ch_num in batch:
@@ -98,11 +134,6 @@ def summarize_episode(
     # Pass 2 — synthesize arc
     arc = _synthesize_arc(chunk_summaries, episode_num)
 
-    arc_path = (
-        Path(settings.data_dir)
-        / "summaries"
-        / f"episode-{episode_num:03d}-arc.json"
-    )
     arc_path.parent.mkdir(parents=True, exist_ok=True)
     arc_path.write_text(arc.model_dump_json(indent=2), encoding="utf-8")
 

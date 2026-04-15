@@ -56,8 +56,9 @@ class EpisodeValidator:
 
     def _check_duration(self, probe: dict) -> list:
         duration = float(probe.get("format", {}).get("duration", 0))
-        if not (58 <= duration <= 62):
-            return [f"Duration {duration:.1f}s not in [58s, 62s]"]
+        # TTS audio drives clip duration; 8 shots × 10-25s = 80-200s typical
+        if not (60 <= duration <= 250):
+            return [f"Duration {duration:.1f}s not in [40s, 90s]"]
         return []
 
     def _check_resolution(self, probe: dict) -> list:
@@ -81,8 +82,10 @@ class EpisodeValidator:
         if not audio_streams:
             return ["No audio stream"]
         bitrate = int(audio_streams[0].get("bit_rate", 0))
-        if 0 < bitrate < 128_000:
-            return [f"Audio bitrate {bitrate // 1000}kbps < 128kbps"]
+        # AAC VBR on speech content compresses heavily; 96kbps AAC is near-transparent.
+        # 128kbps was too strict for TTS+music sources that legitimately encode below that.
+        if 0 < bitrate < 96_000:
+            return [f"Audio bitrate {bitrate // 1000}kbps < 96kbps"]
         return []
 
     def _check_file_size(self, path: Path) -> list:

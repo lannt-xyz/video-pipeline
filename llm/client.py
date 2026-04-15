@@ -83,7 +83,26 @@ class OllamaClient:
             temperature=temperature,
             response_format="json",
         )
-        return json.loads(raw)
+
+        # Strip markdown code fences (```json ... ``` or ``` ... ```)
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            # Remove first and last fence lines
+            inner = lines[1:] if lines[0].startswith("```") else lines
+            if inner and inner[-1].strip() == "```":
+                inner = inner[:-1]
+            stripped = "\n".join(inner).strip()
+
+        if not stripped:
+            logger.warning("Ollama returned empty response — will retry")
+            raise json.JSONDecodeError("Empty response from Ollama", "", 0)
+
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            logger.warning("Ollama returned non-JSON (first 200 chars): {!r}", stripped[:200])
+            raise
 
 
 ollama_client = OllamaClient()

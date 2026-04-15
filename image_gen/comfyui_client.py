@@ -129,6 +129,20 @@ class ComfyUIClient:
         resp.raise_for_status()
         return resp.content
 
+    def upload_image(self, path: Path) -> str:
+        """Upload a local image to ComfyUI /upload/image. Returns the filename as known to ComfyUI."""
+        with open(path, "rb") as f:
+            resp = httpx.post(
+                f"{self.base_url}/upload/image",
+                files={"image": (path.name, f, "image/png")},
+                data={"type": "input", "overwrite": "true"},
+                timeout=30.0,
+            )
+        resp.raise_for_status()
+        uploaded_name: str = resp.json()["name"]
+        logger.debug("Uploaded image to ComfyUI | local={} remote={}", path, uploaded_name)
+        return uploaded_name
+
     def generate_image(
         self,
         workflow_path: str,
@@ -136,7 +150,14 @@ class ComfyUIClient:
         output_path: Path,
     ) -> Path:
         """Load workflow, apply replacements, submit, poll, download output file."""
-        workflow = self._load_workflow(workflow_path, replacements)
+        # Upload any Path values so ComfyUI LoadImage can reference them by name
+        resolved: dict[str, Any] = {}
+        for key, value in replacements.items():
+            if isinstance(value, Path):
+                resolved[key] = self.upload_image(value)
+            else:
+                resolved[key] = value
+        workflow = self._load_workflow(workflow_path, resolved)
         prompt_id = self.submit_prompt(workflow)
         result = self.poll_result(prompt_id)
 

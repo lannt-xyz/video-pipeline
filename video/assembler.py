@@ -17,16 +17,29 @@ def _create_zoompan_clip(
     duration: int = 6,
 ) -> Path:
     """Ken Burns (zoompan) clip from static image + audio. Encoded with h264_nvenc."""
+    if not image_path.exists():
+        raise FileNotFoundError(
+            f"Shot image missing: {image_path} — re-run from --from-phase images"
+        )
+    if not audio_path.exists():
+        raise FileNotFoundError(
+            f"Shot audio missing: {audio_path} — re-run from --from-phase audio"
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fps = settings.fps
-    total_frames = duration * fps
+    # Extend video loop slightly beyond audio duration (audio has 200ms adelay
+    # so its actual length ≈ duration + 0.2s).  The output uses -shortest so
+    # ffmpeg terminates when the audio stream ends — full tail preserved, no cut.
+    video_duration = duration + 1.0
+    total_frames = int(video_duration * fps)
 
     video = (
-        ffmpeg.input(str(image_path), loop=1, t=duration, framerate=fps)
+        ffmpeg.input(str(image_path), loop=1, t=video_duration, framerate=fps)
         .filter(
             "zoompan",
-            z="if(lte(zoom,1.0),1.05,zoom-0.0015)",
+            z="zoom+0.001",      # smooth continuous zoom-in, no reset → no blink
             d=total_frames,
             x="iw/2-(iw/zoom/2)",
             y="ih/2-(ih/zoom/2)",
@@ -37,7 +50,7 @@ def _create_zoompan_clip(
     )
     audio = ffmpeg.input(str(audio_path))
 
-    (
+    try:
         ffmpeg.output(
             video,
             audio.audio,
@@ -47,11 +60,12 @@ def _create_zoompan_clip(
             audio_bitrate="192k",
             video_bitrate="4000k",
             r=fps,
-            t=duration,
-        )
-        .overwrite_output()
-        .run(quiet=True)
-    )
+            shortest=None,  # terminate when the shorter (audio) stream ends
+        ).overwrite_output().run(capture_stdout=True, capture_stderr=True)
+    except ffmpeg.Error as exc:
+        stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
+        logger.error("ffmpeg zoompan failed | path={} stderr={}", output_path, stderr)
+        raise
 
     logger.debug("Zoompan clip created | path={}", output_path)
     return output_path

@@ -9,7 +9,7 @@ class ShotScript(BaseModel):
 
     scene_prompt: str          # English, for ComfyUI
     narration_text: str        # Vietnamese, for TTS
-    duration_sec: int = 6
+    duration_sec: float = 6.0
     is_key_shot: bool = False
     characters: List[str] = []  # [] = scene-only shot, no IPAdapter
 

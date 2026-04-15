@@ -23,8 +23,16 @@ def mix_narration_with_bgm(
 
         bgm_linear = _db_to_linear(settings.bgm_volume_db)
 
+        # Pad narration: 200ms silence at start (prevents first syllable from being
+        # hard-cut), 500ms silence at end (buffer before zoompan -t duration trim).
+        narration_padded = (
+            narration.audio
+            .filter("adelay", "200:all=1")
+            .filter("apad", pad_dur=0.5)
+        )
+
         mixed = ffmpeg.filter(
-            [narration.audio, bgm.audio],
+            [narration_padded, bgm.audio],
             "amix",
             inputs=2,
             weights=f"1 {bgm_linear:.4f}",
@@ -42,10 +50,16 @@ def mix_narration_with_bgm(
             .run(quiet=True)
         )
     else:
-        # No BGM — just re-encode narration to AAC
+        # No BGM — re-encode narration with 200ms lead-in silence only.
+        # apad is intentionally omitted here: without a bounded second stream,
+        # apad has no EOF signal and will loop forever.
+        narration_padded = (
+            ffmpeg.input(str(narration_path)).audio
+            .filter("adelay", "200:all=1")
+        )
         (
-            ffmpeg.input(str(narration_path))
-            .output(
+            ffmpeg.output(
+                narration_padded,
                 str(output_path),
                 acodec="aac",
                 audio_bitrate="192k",

@@ -94,6 +94,7 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
         db.set_episode_status(episode_num, "SCRIPTED")
         return
 
+    vram_manager.unload_comfyui()
     vram_manager.health_check_ollama()
 
     db.record_phase_start(episode_num, "llm")
@@ -117,6 +118,7 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
 def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     from llm.scriptwriter import load_episode_script
+    from llm.character_extractor import load_all_characters
     from image_gen.comfyui_client import comfyui_client
     from image_gen.character_gen import generate_character_anchors, get_anchor_path
 
@@ -125,8 +127,8 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
         db.set_episode_status(episode_num, "IMAGES_DONE")
         return
 
-    vram_manager.health_check_comfyui()
     vram_manager.unload_ollama()
+    vram_manager.health_check_comfyui()
 
     # Ensure character anchors exist (idempotent)
     generate_character_anchors()
@@ -135,9 +137,18 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     images_dir = Path(settings.data_dir) / "images" / f"episode-{episode_num:03d}"
     images_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build name→description map for reinforcing IP-Adapter with text tags
+    characters_map = {c.name: c for c in load_all_characters()}
+
     negative = (
-        "lowres, bad anatomy, bad hands, text, error,"
-        " worst quality, low quality, blurry, score_1, score_2"
+        # PonyDiffusion quality anti-tags
+        "score_1, score_2, score_3, score_4, score_5, "
+        # Text / watermark — prevents manga SFX, speech bubbles, captions
+        "text, watermark, signature, username, logo, "
+        "speech bubble, subtitle, caption, banner, label, "
+        # General quality
+        "lowres, bad anatomy, bad hands, error, "
+        "worst quality, low quality, blurry, jpeg artifacts"
     )
 
     db.record_phase_start(episode_num, "images")
@@ -150,9 +161,13 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
         if shot.characters:
             anchor = get_anchor_path(shot.characters[0])
+            # Prepend character description tags so text prompt reinforces IP-Adapter anchor
+            char_obj = characters_map.get(shot.characters[0])
+            char_tags = char_obj.description if char_obj else ""
+            combined_prompt = f"{char_tags}, {shot.scene_prompt}" if char_tags else shot.scene_prompt
             workflow = "image_gen/workflows/txt2img_ipadapter.json"
             replacements = {
-                "SCENE_PROMPT": shot.scene_prompt,
+                "SCENE_PROMPT": combined_prompt,
                 "NEGATIVE_PROMPT": negative,
                 "WIDTH": settings.image_width,
                 "HEIGHT": settings.image_height,
@@ -232,6 +247,16 @@ def run_audio(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     db.set_episode_status(episode_num, "AUDIO_DONE")
 
 
+def _probe_duration(path: Path) -> float:
+    """Return audio/video file duration in seconds via ffprobe. Returns 0.0 on error."""
+    import ffmpeg as _ffmpeg
+    try:
+        info = _ffmpeg.probe(str(path))
+        return float(info["format"]["duration"])
+    except Exception:
+        return 0.0
+
+
 def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     from llm.scriptwriter import load_episode_script
     from video.assembler import assemble_shot_clips
@@ -247,6 +272,14 @@ def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     audio_paths = [
         audio_dir / f"shot-{i:02d}-mixed.aac" for i in range(len(script.shots))
     ]
+
+    # Patch duration_sec with actual AAC duration so that zoompan and subtitle
+    # timing match the real TTS length rather than the LLM-estimated value.
+    for shot, audio_path in zip(script.shots, audio_paths):
+        if audio_path.exists():
+            actual = _probe_duration(audio_path)
+            if actual > 0:
+                shot.duration_sec = actual  # preserve exact float, no rounding
 
     db.record_phase_start(episode_num, "video")
 
@@ -326,6 +359,15 @@ def run_episode(
             db.set_episode_status(
                 episode_num, "ERROR", error_msg=f"{phase}: {exc}"
             )
+            # Always free VRAM on failure so the next run is not blocked
+            try:
+                vram_manager.unload_ollama()
+            except Exception as vram_exc:
+                logger.warning("Ollama unload failed during cleanup | error={}", vram_exc)
+            try:
+                vram_manager.unload_comfyui()
+            except Exception as vram_exc:
+                logger.warning("ComfyUI unload failed during cleanup | error={}", vram_exc)
             raise
 
 

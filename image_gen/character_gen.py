@@ -10,8 +10,12 @@ from llm.character_extractor import load_all_characters
 from models.schemas import Character
 
 
+_VN_SPECIAL = str.maketrans({"đ": "d", "Đ": "D"})
+
+
 def _slugify(name: str) -> str:
-    # Strip diacritics (e.g. Vietnamese: "diệp thiếu dương" → "diep_thieu_duong")
+    # Handle đ/Đ (does not decompose via NFD), then strip remaining diacritics
+    name = name.translate(_VN_SPECIAL)
     normalized = unicodedata.normalize("NFD", name.lower())
     ascii_name = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
     return ascii_name.replace(" ", "_").replace("-", "_")

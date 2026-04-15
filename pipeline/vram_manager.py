@@ -1,4 +1,3 @@
-import subprocess
 import time
 from typing import Optional
 
@@ -12,25 +11,38 @@ class VRAMManager:
     """Manages mutual exclusion between Ollama and ComfyUI GPU usage."""
 
     def unload_ollama(self) -> None:
-        """Stop Ollama model to free VRAM before starting ComfyUI."""
+        """Force Ollama to release VRAM immediately via keep_alive=0 API call."""
         logger.info("Unloading Ollama to free VRAM...")
         try:
-            result = subprocess.run(
-                ["ollama", "stop", settings.llm_model],
-                capture_output=True,
-                text=True,
-                timeout=30,
+            # keep_alive=0 forces llama.cpp to evict the model from VRAM immediately
+            resp = httpx.post(
+                f"{settings.ollama_url}/api/generate",
+                json={"model": settings.llm_model, "keep_alive": 0},
+                timeout=15.0,
             )
-            if result.returncode != 0:
-                logger.warning("ollama stop stderr: {}", result.stderr.strip())
-        except FileNotFoundError:
-            logger.warning("ollama CLI not found — skipping unload")
-        except subprocess.TimeoutExpired:
-            logger.warning("ollama stop timed out")
+            logger.debug("Ollama keep_alive=0 response | status={}", resp.status_code)
+        except httpx.HTTPError as exc:
+            logger.warning("Ollama unload API failed | error={}", exc)
 
         # Give GPU time to release VRAM
-        time.sleep(3)
-        logger.info("Ollama unloaded")
+        time.sleep(2)
+        logger.info("Ollama VRAM released")
+
+    def unload_comfyui(self) -> None:
+        """Ask ComfyUI to free all cached models from VRAM."""
+        logger.info("Unloading ComfyUI models to free VRAM...")
+        try:
+            resp = httpx.post(
+                f"{settings.comfyui_url}/free",
+                json={"unload_models": True, "free_memory": True},
+                timeout=15.0,
+            )
+            logger.debug("ComfyUI /free response | status={}", resp.status_code)
+        except httpx.HTTPError as exc:
+            logger.warning("ComfyUI unload API failed | error={}", exc)
+
+        time.sleep(2)
+        logger.info("ComfyUI VRAM released")
 
     def load_ollama(self) -> None:
         """Start Ollama serve and wait until healthy."""

@@ -9,7 +9,7 @@ ollama_url: "http://localhost:11434"
 comfyui_url: "http://localhost:8188"
 
 # LLM configuration
-llm_model: "qwen2.5:7b-instruct-q8_0"
+llm_model: "gemma4-32k:latest"
 llm_timeout: 120
 llm_max_retries: 3
 llm_context_size: 16384
