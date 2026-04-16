@@ -78,14 +78,14 @@ def _create_zoompan_clip(
             audio_bitrate="192k",
             video_bitrate="4000k",
             r=fps,
-            shortest=None,
+            t=duration,
         ).overwrite_output().run(capture_stdout=True, capture_stderr=True)
     except ffmpeg.Error as exc:
         stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
         logger.error("ffmpeg zoompan failed | path={} stderr={}", output_path, stderr)
         raise
 
-    logger.debug("Zoompan clip created | path={} motion={}", output_path, motion.value)
+    logger.debug("Zoompan clip created | path={} duration={}s motion={}", output_path, duration, motion.value)
     return output_path
 
 
@@ -160,7 +160,7 @@ def _create_multiframe_clip(
             audio_bitrate="192k",
             video_bitrate="4000k",
             r=fps,
-            shortest=None,
+            t=duration,
         ).overwrite_output().run(capture_stdout=True, capture_stderr=True)
     except ffmpeg.Error as exc:
         stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""

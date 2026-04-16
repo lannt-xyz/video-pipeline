@@ -93,6 +93,8 @@ class ComfyUIClient:
                 history = resp.json()
                 if prompt_id in history:
                     entry = history[prompt_id]
+
+                    # Check top-level error key (older ComfyUI)
                     if "error" in entry:
                         error_msg = str(entry["error"])
                         if "out of memory" in error_msg.lower() or "cuda out" in error_msg.lower():
@@ -102,7 +104,23 @@ class ComfyUIClient:
                         raise ComfyUIError(
                             f"ComfyUI error for prompt {prompt_id}: {error_msg}"
                         )
-                    return entry
+
+                    # Check status.messages for execution_error (ComfyUI ≥0.18)
+                    status = entry.get("status", {})
+                    status_str = status.get("status_str", "")
+                    if status_str == "error":
+                        err_detail = self._extract_execution_error(status)
+                        if "out of memory" in err_detail.lower() or "cuda out" in err_detail.lower():
+                            raise ComfyUIOutOfMemoryError(
+                                f"ComfyUI OOM for prompt {prompt_id}: {err_detail}"
+                            )
+                        raise ComfyUIError(
+                            f"ComfyUI execution error for prompt {prompt_id}: {err_detail}"
+                        )
+
+                    # Still running — status_str is usually "success" or "" when done
+                    if status_str in ("success", "") and entry.get("outputs") is not None:
+                        return entry
             except (httpx.HTTPError, KeyError) as exc:
                 logger.debug(
                     "Poll attempt failed | prompt_id={} error={}", prompt_id, exc
@@ -208,6 +226,16 @@ class ComfyUIClient:
         workflow = json.loads(content)
         # Strip metadata keys (e.g. "_meta") — ComfyUI rejects non-node top-level keys
         return {k: v for k, v in workflow.items() if not k.startswith("_")}
+
+    @staticmethod
+    def _extract_execution_error(status: dict) -> str:
+        """Extract human-readable error from status.messages execution_error entry."""
+        for msg_type, msg_data in status.get("messages", []):
+            if msg_type == "execution_error" and isinstance(msg_data, dict):
+                node_type = msg_data.get("node_type", "unknown")
+                exception = msg_data.get("exception_message", "unknown error")
+                return f"[{node_type}] {exception.strip()}"
+        return "unknown execution error"
 
     def _extract_output_files(self, history_entry: dict) -> List[dict]:
         """Extract all output image/video file references from a history entry."""

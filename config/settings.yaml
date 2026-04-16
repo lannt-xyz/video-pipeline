@@ -8,7 +8,7 @@ chapters_per_episode: 5
 ollama_url: "http://localhost:11434"
 comfyui_url: "http://localhost:8188"
 
-# LLM configuration qwen3.5:cloud
+# LLM configuration gemma4-32k:latest
 llm_model: "gemma4-32k:latest"
 llm_timeout: 120
 llm_max_retries: 3

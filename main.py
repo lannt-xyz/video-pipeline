@@ -6,6 +6,9 @@ Usage:
     python main.py --episode 1 --from-phase llm   # resume episode 1 from LLM phase
     python main.py --from-episode 5          # resume full pipeline from episode 5
     python main.py --dry-run                 # validate config + log plan, no execution
+
+    python main.py --probe-images 1          # inspect character→scene matching (no ComfyUI)
+    python main.py --probe-images 1 --probe-shots 3  # inspect + generate first 3 shots into data/probe/
 """
 
 from pipeline.orchestrator import main

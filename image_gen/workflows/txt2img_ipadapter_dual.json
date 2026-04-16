@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "SDXL txt2img with dual IPAdapter PLUS FACE for 2-character scenes. Text prompt should contain ONLY scene tags + gender count, NO character appearance tags.",
+    "description": "SDXL txt2img with dual IPAdapter PLUS FACE for 2-character scenes. No LoRAs.",
     "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
     "ipadapter": "ip-adapter-plus-face_sdxl_vit-h.safetensors",
     "placeholders": {
@@ -13,9 +13,15 @@
       "ANCHOR_PATH_2": "char2_slug_anchor.png"
     },
     "required_nodes": [
-      "CheckpointLoaderSimple", "LoraLoader", "CLIPTextEncode", "KSampler",
-      "VAEDecode", "SaveImage", "IPAdapterUnifiedLoader",
-      "IPAdapterAdvanced", "PrepImageForClipVision", "LoadImage"
+      "CheckpointLoaderSimple",
+      "CLIPTextEncode",
+      "KSampler",
+      "VAEDecode",
+      "SaveImage",
+      "IPAdapterUnifiedLoader",
+      "IPAdapterAdvanced",
+      "PrepImageForClipVision",
+      "LoadImage"
     ]
   },
   "1": {
@@ -24,50 +30,13 @@
       "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
     }
   },
-  "2": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": ["1", 0],
-      "clip": ["1", 1],
-      "lora_name": "ink_wash_painting.safetensors",
-      "strength_model": 0.6,
-      "strength_clip": 0.6
-    }
-  },
-  "3": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": ["2", 0],
-      "clip": ["2", 1],
-      "lora_name": "xianxia_fantasy.safetensors",
-      "strength_model": 0.5,
-      "strength_clip": 0.5
-    }
-  },
-  "4": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": ["3", 0],
-      "clip": ["3", 1],
-      "lora_name": "manhua_style_v2.safetensors",
-      "strength_model": 0.7,
-      "strength_clip": 0.7
-    }
-  },
-  "5": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": ["4", 0],
-      "clip": ["4", 1],
-      "lora_name": "dark_horror_atmosphere.safetensors",
-      "strength_model": 0.4,
-      "strength_clip": 0.4
-    }
-  },
   "6": {
     "class_type": "IPAdapterUnifiedLoader",
     "inputs": {
-      "model": ["5", 0],
+      "model": [
+        "1",
+        0
+      ],
       "preset": "PLUS FACE (portraits)"
     }
   },
@@ -86,7 +55,10 @@
   "15": {
     "class_type": "PrepImageForClipVision",
     "inputs": {
-      "image": ["17", 0],
+      "image": [
+        "17",
+        0
+      ],
       "interpolation": "LANCZOS",
       "crop_position": "center",
       "sharpening": 0.0
@@ -95,7 +67,10 @@
   "19": {
     "class_type": "PrepImageForClipVision",
     "inputs": {
-      "image": ["18", 0],
+      "image": [
+        "18",
+        0
+      ],
       "interpolation": "LANCZOS",
       "crop_position": "center",
       "sharpening": 0.0
@@ -104,11 +79,20 @@
   "8": {
     "class_type": "IPAdapterAdvanced",
     "inputs": {
-      "model": ["6", 0],
-      "ipadapter": ["6", 1],
-      "image": ["15", 0],
-      "weight": 0.7,
-      "weight_type": "style and composition",
+      "model": [
+        "6",
+        0
+      ],
+      "ipadapter": [
+        "6",
+        1
+      ],
+      "image": [
+        "15",
+        0
+      ],
+      "weight": 0.75,
+      "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0.0,
       "end_at": 0.85,
@@ -118,11 +102,20 @@
   "16": {
     "class_type": "IPAdapterAdvanced",
     "inputs": {
-      "model": ["8", 0],
-      "ipadapter": ["6", 1],
-      "image": ["19", 0],
-      "weight": 0.7,
-      "weight_type": "style and composition",
+      "model": [
+        "8",
+        0
+      ],
+      "ipadapter": [
+        "6",
+        1
+      ],
+      "image": [
+        "19",
+        0
+      ],
+      "weight": 0.75,
+      "weight_type": "linear",
       "combine_embeds": "concat",
       "start_at": 0.0,
       "end_at": 0.85,
@@ -133,14 +126,20 @@
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "__SCENE_PROMPT__, score_9, score_8_up, score_7_up, masterpiece, best quality, highly detailed",
-      "clip": ["5", 1]
+      "clip": [
+        "1",
+        1
+      ]
     }
   },
   "10": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "__NEGATIVE_PROMPT__, score_1, score_2, score_3, score_4, nsfw",
-      "clip": ["5", 1]
+      "clip": [
+        "1",
+        1
+      ]
     }
   },
   "11": {
@@ -154,10 +153,22 @@
   "12": {
     "class_type": "KSampler",
     "inputs": {
-      "model": ["16", 0],
-      "positive": ["9", 0],
-      "negative": ["10", 0],
-      "latent_image": ["11", 0],
+      "model": [
+        "16",
+        0
+      ],
+      "positive": [
+        "9",
+        0
+      ],
+      "negative": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ],
       "seed": "__SEED__",
       "steps": 28,
       "cfg": 6.0,
@@ -169,14 +180,23 @@
   "13": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["12", 0],
-      "vae": ["1", 2]
+      "samples": [
+        "12",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
     }
   },
   "14": {
     "class_type": "SaveImage",
     "inputs": {
-      "images": ["13", 0],
+      "images": [
+        "13",
+        0
+      ],
       "filename_prefix": "character_shot_dual"
     }
   }

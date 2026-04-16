@@ -111,12 +111,12 @@ REQUIRED in scene_prompt:
 OTHER RULES:
 - duration_sec: 2 or 3 for shots 1–2; 6 for standard shots, 8 for climactic action shots.
 - is_key_shot: Mark EXACTLY 2-3 shots as true — the most action-packed.
-- characters: list character names visible. Use [] for scenery-only.
+- characters: CRITICAL — list the EXACT character names (from the provided Characters list) visible in each shot. Most shots feature 1-2 characters. Use [] ONLY for pure scenery/environment shots with NO characters at all. At least 5 out of 8 shots MUST have non-empty characters.
 
 Return JSON:
 {
   "title": "string — episode title in Vietnamese",
-  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": [], "camera_flow": "wide_to_close" } ]
+  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "wide_to_close" } ]
 }
 shots MUST have EXACTLY 8 elements. EXACTLY 2-3 must have is_key_shot=true.
 camera_flow MUST be one of: "wide_to_close", "close_to_wide", "pan_across", "detail_reveal", "static_close", "static_wide"."""
@@ -135,7 +135,7 @@ RULES:
 - camera_flow: MUST be "static_close" or "detail_reveal" for hook shots.
 
 Return JSON:
-{ "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": [], "camera_flow": "static_close" }"""
+{ "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "static_close" }"""
 
 
 @retry(
@@ -205,6 +205,39 @@ def _load_chunk_summaries(episode_num: int) -> list:
     return sorted(chunks, key=lambda c: c["chunk_index"])
 
 
+def _build_characters_ref(arc_char_names: List[str]) -> str:
+    """Build a canonical character reference string for LLM prompts.
+
+    Enriches arc character names with their aliases so the LLM knows exactly
+    which string to use in the `characters` list of each shot.
+    Format: "Canonical Name (also: alias1, alias2), ..."
+    Falls back to the arc name if no matching character JSON is found.
+    """
+    from llm.character_extractor import load_all_characters
+
+    all_chars = load_all_characters()
+    # Build a lookup: any known name/alias → Character
+    lookup: dict[str, "Character"] = {}
+    for c in all_chars:
+        lookup[c.name] = c
+        for a in c.alias:
+            lookup[a] = c
+
+    parts: List[str] = []
+    seen_canonical: set[str] = set()
+    for arc_name in arc_char_names:
+        char = lookup.get(arc_name)
+        if char is None:
+            parts.append(arc_name)
+        elif char.name not in seen_canonical:
+            seen_canonical.add(char.name)
+            if char.alias:
+                parts.append(f"{char.name} (also: {', '.join(char.alias)})")
+            else:
+                parts.append(char.name)
+    return ", ".join(parts)
+
+
 def write_episode_script(episode_num: int) -> EpisodeScript:
     """Generate shot script. Caps at _MAX_SHOTS_PER_EPISODE; excess saved as carry-over.
     First checks carry-over from previous episode before calling LLM.
@@ -213,13 +246,15 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     # Build arc_text upfront — needed for both LLM path and carryover hook regeneration
     arc = load_arc_overview(episode_num)
     chunks = _load_chunk_summaries(episode_num)
+    # Enrich character names with aliases so LLM uses canonical names in shot.characters
+    chars_ref = _build_characters_ref(arc.characters_in_episode)
     if chunks:
         scenes_text = "\n\n".join(
             f"Scene {i + 1} (chương {c['chapter_start']}-{c['chapter_end']}):\n{c['summary'][:400]}"
             for i, c in enumerate(chunks)
         )
         arc_text = (
-            f"Characters: {', '.join(arc.characters_in_episode)}\n\n"
+            f"Characters: {chars_ref}\n\n"
             f"ORDERED SCENES:\n\n{scenes_text}"
         )
     else:
@@ -227,7 +262,7 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
             f"Summary: {arc.arc_summary}\n\n"
             f"ORDERED SCENES:\n"
             + "\n".join(f"Scene {i+1}: {e}" for i, e in enumerate(arc.key_events))
-            + f"\n\nCharacters: {', '.join(arc.characters_in_episode)}"
+            + f"\n\nCharacters: {chars_ref}"
         )
 
     # 1. Load carry-over from previous episode
@@ -270,6 +305,7 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _normalize_hook_durations(episode_shots, episode_num)
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
     episode_shots = _normalize_camera_flow(episode_shots, episode_num)
+    episode_shots = _backfill_characters(episode_shots, arc.characters_in_episode, episode_num)
 
     script = EpisodeScript(
         episode_num=episode_num,
@@ -305,8 +341,12 @@ def _normalize_duration(shots: List[ShotScript], episode_num: int) -> List[ShotS
     Distributes extra/missing seconds evenly; each shot is clamped to [4, 10].
     Applied after LLM generation so the validator range [58, 62] is always met.
     Skip shots 0 and 1 when redistributing — hook durations are enforced separately.
+
+    Target is inflated by (n-1) × shot_transition_duration to compensate for
+    time lost to xfade overlaps in the final video assembly.
     """
-    target = settings.target_duration_sec
+    n_transitions = max(0, len(shots) - 1)
+    target = settings.target_duration_sec + n_transitions * settings.shot_transition_duration
     total = sum(s.duration_sec for s in shots)
     if abs(total - target) <= 2:
         return shots  # already within tolerance
@@ -401,4 +441,47 @@ def _normalize_camera_flow(shots: List[ShotScript], episode_num: int) -> List[Sh
         elif i == len(shots) - 1:
             if shot.camera_flow == CameraFlow.WIDE_TO_CLOSE:
                 shots[i] = shot.model_copy(update={"camera_flow": CameraFlow.CLOSE_TO_WIDE})
+    return shots
+
+
+def _backfill_characters(
+    shots: List[ShotScript],
+    arc_characters: List[str],
+    episode_num: int,
+) -> List[ShotScript]:
+    """If LLM left characters empty on most shots, assign from arc_characters.
+
+    Strategy: shots 0-1 (hooks) get the first character; remaining shots cycle
+    through arc_characters round-robin.  Pure scenery shots (wide establishing,
+    no action words) keep [].
+    """
+    if not arc_characters:
+        return shots
+
+    non_empty = sum(1 for s in shots if s.characters)
+    if non_empty >= len(shots) // 2:
+        return shots  # LLM already filled enough
+
+    logger.warning(
+        "Backfilling characters — LLM left {}/{} shots empty | episode={}",
+        len(shots) - non_empty, len(shots), episode_num,
+    )
+
+    shots = list(shots)
+    main_char = arc_characters[0]
+    for i in range(len(shots)):
+        if shots[i].characters:
+            continue  # keep LLM choice
+        if i <= 1:
+            # Hook shots: main character
+            shots[i] = shots[i].model_copy(update={"characters": [main_char]})
+        else:
+            # Rotate through available characters, assign 1-2
+            char_idx = (i - 2) % len(arc_characters)
+            assigned = [arc_characters[char_idx]]
+            if len(arc_characters) > 1 and i % 3 == 0:
+                second = arc_characters[(char_idx + 1) % len(arc_characters)]
+                assigned.append(second)
+            shots[i] = shots[i].model_copy(update={"characters": assigned})
+
     return shots

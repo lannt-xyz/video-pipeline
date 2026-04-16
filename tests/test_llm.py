@@ -159,6 +159,7 @@ class TestScriptwriter:
             mock_settings.data_dir = str(tmp_path)
             mock_settings.llm_max_retries = 3
             mock_settings.target_duration_sec = 60
+            mock_settings.shot_transition_duration = 0.3
 
             script = write_episode_script(1)
 
