@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "SDXL txt2img with LoRA stack + IPAdapter PLUS for full character identity transfer.",
+    "description": "SDXL txt2img with LoRA stack + IPAdapter PLUS multi-reference (2-3 views) for stronger identity.",
     "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
     "ipadapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
     "placeholders": {
@@ -9,7 +9,9 @@
       "WIDTH": 576,
       "HEIGHT": 1024,
       "SEED": 42,
-      "ANCHOR_PATH": "character_slug_anchor.png"
+      "ANCHOR_PATH": "front_view_anchor.png",
+      "ANCHOR_PATH_2": "3q_view_anchor.png",
+      "ANCHOR_PATH_3": "(optional) side_view_anchor.png"
     }
   },
   "1": {
@@ -92,22 +94,84 @@
       "preset": "PLUS (high strength)"
     }
   },
-  "17": {
+  "20": {
     "class_type": "LoadImage",
     "inputs": {
       "image": "__ANCHOR_PATH__"
     }
   },
-  "15": {
+  "21": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_PATH_2__"
+    }
+  },
+  "22": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_PATH_3__"
+    }
+  },
+  "23": {
     "class_type": "PrepImageForClipVision",
     "inputs": {
       "image": [
-        "17",
+        "20",
         0
       ],
       "interpolation": "LANCZOS",
       "crop_position": "center",
       "sharpening": 0.0
+    }
+  },
+  "24": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": [
+        "21",
+        0
+      ],
+      "interpolation": "LANCZOS",
+      "crop_position": "center",
+      "sharpening": 0.0
+    }
+  },
+  "25": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": [
+        "22",
+        0
+      ],
+      "interpolation": "LANCZOS",
+      "crop_position": "center",
+      "sharpening": 0.0
+    }
+  },
+  "26": {
+    "class_type": "ImageBatch",
+    "inputs": {
+      "image1": [
+        "23",
+        0
+      ],
+      "image2": [
+        "24",
+        0
+      ]
+    }
+  },
+  "27": {
+    "class_type": "ImageBatch",
+    "inputs": {
+      "image1": [
+        "26",
+        0
+      ],
+      "image2": [
+        "25",
+        0
+      ]
     }
   },
   "8": {
@@ -122,12 +186,12 @@
         1
       ],
       "image": [
-        "15",
+        "27",
         0
       ],
       "weight": 0.6,
       "weight_type": "ease in-out",
-      "combine_embeds": "concat",
+      "combine_embeds": "average",
       "start_at": 0.0,
       "end_at": 0.65,
       "embeds_scaling": "K+V w/ C penalty"
@@ -208,7 +272,7 @@
         "13",
         0
       ],
-      "filename_prefix": "character_shot"
+      "filename_prefix": "character_shot_multiref"
     }
   }
 }

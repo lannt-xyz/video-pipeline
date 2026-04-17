@@ -1,14 +1,15 @@
-# Story source
+# Story key
 story_slug: "mao-son-troc-quy-nhan"
-base_url: "https://truyencv.io/truyen/{story_slug}/chuong-{n}/"
+
+# Episode planning
 total_chapters: 3534
-chapters_per_episode: 35
+chapters_per_episode: 5
 
 # API endpoints
 ollama_url: "http://localhost:11434"
 comfyui_url: "http://localhost:8188"
 
-# LLM configuration
+# LLM configuration gemma4-32k:latest
 llm_model: "gemma4-32k:latest"
 llm_timeout: 120
 llm_max_retries: 3
@@ -18,9 +19,10 @@ llm_context_size: 16384
 comfyui_timeout: 300
 comfyui_poll_interval: 2
 
-# Image generation (9:16 portrait)
-image_width: 720
-image_height: 1280
+# Image generation (9:16 portrait) — 768x1024 gives wider canvas for background depth
+# while staying within 8GB VRAM budget for PonyXL SDXL
+image_width: 768
+image_height: 1024
 
 # Thumbnail (16:9 landscape)
 thumbnail_width: 1280
@@ -35,18 +37,20 @@ shot_duration_sec: 6
 tts_voice: "vi-VN-HoaiMyNeural"
 bgm_volume_db: -15
 
+# Multi-frame & motion settings
+frames_per_shot: 2              # images per shot (1 = legacy, 2 = multi-frame)
+crossfade_duration: 0.5         # seconds, crossfade between frames within a shot
+shot_transition_duration: 0.3   # seconds, transition between shots
+shot_transition_type: "dissolve" # FFmpeg xfade transition type
+
 # Pipeline feature flags
 enable_svd: false
 
 # Paths (relative to project root)
-data_dir: "data"
-db_path: "db/pipeline.db"
+data_dir: "data/{story_slug}"
+db_path: "data/{story_slug}/{story_slug}.db"
 logs_dir: "logs"
 assets_dir: "assets"
-
-# Crawler
-crawler_rate_limit: 1.0
-crawler_max_retries: 5
 
 # LoRA weights for ComfyUI (Pony V6 XL)
 lora_weights:

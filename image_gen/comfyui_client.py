@@ -93,6 +93,8 @@ class ComfyUIClient:
                 history = resp.json()
                 if prompt_id in history:
                     entry = history[prompt_id]
+
+                    # Check top-level error key (older ComfyUI)
                     if "error" in entry:
                         error_msg = str(entry["error"])
                         if "out of memory" in error_msg.lower() or "cuda out" in error_msg.lower():
@@ -102,7 +104,23 @@ class ComfyUIClient:
                         raise ComfyUIError(
                             f"ComfyUI error for prompt {prompt_id}: {error_msg}"
                         )
-                    return entry
+
+                    # Check status.messages for execution_error (ComfyUI ≥0.18)
+                    status = entry.get("status", {})
+                    status_str = status.get("status_str", "")
+                    if status_str == "error":
+                        err_detail = self._extract_execution_error(status)
+                        if "out of memory" in err_detail.lower() or "cuda out" in err_detail.lower():
+                            raise ComfyUIOutOfMemoryError(
+                                f"ComfyUI OOM for prompt {prompt_id}: {err_detail}"
+                            )
+                        raise ComfyUIError(
+                            f"ComfyUI execution error for prompt {prompt_id}: {err_detail}"
+                        )
+
+                    # Still running — status_str is usually "success" or "" when done
+                    if status_str in ("success", "") and entry.get("outputs") is not None:
+                        return entry
             except (httpx.HTTPError, KeyError) as exc:
                 logger.debug(
                     "Poll attempt failed | prompt_id={} error={}", prompt_id, exc
@@ -131,10 +149,13 @@ class ComfyUIClient:
 
     def upload_image(self, path: Path) -> str:
         """Upload a local image to ComfyUI /upload/image. Returns the filename as known to ComfyUI."""
+        # Use parent_dir+filename as upload name to prevent ComfyUI cache collisions
+        # when multiple characters all have "anchor.png" (e.g. thanh_van_tu_anchor.png).
+        unique_name = f"{path.parent.name}_{path.name}" if path.parent.name else path.name
         with open(path, "rb") as f:
             resp = httpx.post(
                 f"{self.base_url}/upload/image",
-                files={"image": (path.name, f, "image/png")},
+                files={"image": (unique_name, f, "image/png")},
                 data={"type": "input", "overwrite": "true"},
                 timeout=30.0,
             )
@@ -158,6 +179,7 @@ class ComfyUIClient:
             else:
                 resolved[key] = value
         workflow = self._load_workflow(workflow_path, resolved)
+        self._save_prompt_debug(workflow, output_path)
         prompt_id = self.submit_prompt(workflow)
         result = self.poll_result(prompt_id)
 
@@ -177,6 +199,23 @@ class ComfyUIClient:
         output_path.write_bytes(file_bytes)
         logger.info("File downloaded | path={}", output_path)
         return output_path
+
+    def _save_prompt_debug(self, workflow: dict, output_path: Path) -> None:
+        """Persist the final workflow JSON sent to ComfyUI for debugging.
+
+        Uses parent folder name as prefix to avoid collisions when multiple
+        characters share the same filename (e.g. anchor.png → diep_binh_anchor.json).
+        """
+        debug_dir = Path("logs/comfyui_prompts")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        parent_name = output_path.parent.name
+        stem = output_path.stem
+        debug_name = f"{parent_name}_{stem}" if parent_name and parent_name != "." else stem
+        debug_file = debug_dir / f"{debug_name}.json"
+        debug_file.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.debug("ComfyUI prompt saved | path={}", debug_file)
 
     def _load_workflow(self, workflow_path: str, replacements: dict) -> dict:
         """Load workflow JSON and replace __KEY__ placeholders.
@@ -205,6 +244,16 @@ class ComfyUIClient:
         workflow = json.loads(content)
         # Strip metadata keys (e.g. "_meta") — ComfyUI rejects non-node top-level keys
         return {k: v for k, v in workflow.items() if not k.startswith("_")}
+
+    @staticmethod
+    def _extract_execution_error(status: dict) -> str:
+        """Extract human-readable error from status.messages execution_error entry."""
+        for msg_type, msg_data in status.get("messages", []):
+            if msg_type == "execution_error" and isinstance(msg_data, dict):
+                node_type = msg_data.get("node_type", "unknown")
+                exception = msg_data.get("exception_message", "unknown error")
+                return f"[{node_type}] {exception.strip()}"
+        return "unknown execution error"
 
     def _extract_output_files(self, history_entry: dict) -> List[dict]:
         """Extract all output image/video file references from a history entry."""

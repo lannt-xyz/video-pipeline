@@ -94,11 +94,11 @@ class TestStateDB:
         import time
 
         db.upsert_episode(1, 1, 35)
-        db.record_phase_start(1, "crawl")
+        db.record_phase_start(1, "llm")
         time.sleep(0.05)
-        db.record_phase_done(1, "crawl")
+        db.record_phase_done(1, "llm")
 
-        avg = db.get_avg_phase_duration("crawl")
+        avg = db.get_avg_phase_duration("llm")
         assert avg is not None
         assert avg > 0.04
 
@@ -111,10 +111,10 @@ class TestStateDB:
         db.reset_episode_to_phase(1, "video")
         assert db.get_episode_status(1) == "AUDIO_DONE"
 
-    def test_reset_episode_to_crawl(self, db):
+    def test_reset_episode_to_llm(self, db):
         db.upsert_episode(1, 1, 35)
         db.set_episode_status(1, "VALIDATED")
-        db.reset_episode_to_phase(1, "crawl")
+        db.reset_episode_to_phase(1, "llm")
         assert db.get_episode_status(1) == "PENDING"
 
 

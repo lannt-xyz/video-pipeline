@@ -6,9 +6,9 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config.settings import settings
-from crawler.storage import load_chapter_content
 from llm.client import ollama_client
 from models.schemas import ArcOverview, ChunkSummary
+from pipeline.state import StateDB
 
 _CHUNK_SYSTEM = (
     "You are a story analyst. Summarize the provided Vietnamese story chapters "
@@ -81,6 +81,7 @@ def summarize_episode(
     chapters_per_chunk = 5
     chapter_nums = list(range(chapter_start, chapter_end + 1))
     chunk_summaries: List[str] = []
+    db = StateDB()
 
     # Load already-saved chunk summaries to avoid re-calling LLM
     cached_chunks: dict = {}
@@ -104,7 +105,7 @@ def summarize_episode(
         batch = chapter_nums[start : start + chapters_per_chunk]
         texts = []
         for ch_num in batch:
-            content = load_chapter_content(ch_num)
+            content = db.get_chapter_content(ch_num)
             if content:
                 # Truncate long chapters to keep total prompt manageable
                 texts.append(f"=== Chương {ch_num} ===\n{content[:3000]}")

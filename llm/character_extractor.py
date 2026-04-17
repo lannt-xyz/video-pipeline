@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from config.settings import settings
 from llm.client import ollama_client
 from models.schemas import Character
+from pipeline.state import StateDB
 
 _EXTRACTOR_SYSTEM = """You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL Danbooru model).
 Your job: read Vietnamese story context and produce a clean Danbooru tag list for each character.
@@ -50,8 +51,16 @@ MANDATORY RULES:
    Safe male styles: short hair, buzz cut, side part, low bun, tied back
 
 6. Description must contain ONLY visual tags. Remove all abstract/personality words:
-   FORBIDDEN: mysterious aura, calculating, weathered feeling, spiritual energy, symbolizing, exudes, scholar's aura, ethereal
-   REPLACE WITH visual equivalents: serious expression, sharp eyes, wrinkled face, looking at viewer
+   FORBIDDEN: mysterious aura, mysterious, scholar, scholar's aura, calculating, weathered feeling, spiritual energy, symbolizing, exudes, ethereal, elegant aura, noble aura, cold aura, dangerous aura, manipulative, cunning aura
+   REPLACE WITH visual equivalents: serious expression, sharp eyes, wrinkled face, cold expression, looking at viewer
+
+7. Female character SAFETY rules — critical to prevent AI from generating monsters or males:
+   - ALWAYS start female characters with: 1girl, solo
+   - NEVER use tags that trigger male anatomy: masculine, muscular, broad shoulders, armor, horns, wings, claws
+   - FORBIDDEN soft tags on 1girl: mysterious, scholar, ethereal, revealing, revealing outfit, bare shoulders
+   - REQUIRED on every 1girl description: at least 2 of: fully clothed, high collar, long sleeves, traditional attire, modern casual wear, formal wear
+   - If character wears traditional clothes: use "traditional chinese clothing, fully clothed, high collar"
+   - If character wears modern clothes: use "blouse, dark skirt, modern casual wear" — no skin-exposure tags
 
 EXAMPLES:
 Modern male ghost hunter: "1boy, solo, short black hair, side part, dark brown eyes, sharp eyes, dark jacket, dark pants, talisman in hand, athletic build, serious expression, urban background"
@@ -139,10 +148,10 @@ def extract_all_characters(force: bool = False) -> List[Character]:
     ]
 
     # Load a few raw chapters for extra appearance hints (first 3 chapters only)
-    from crawler.storage import load_chapter_content
+    db = StateDB()
     raw_chapters = ""
     for ch_num in range(1, 4):
-        content = load_chapter_content(ch_num)
+        content = db.get_chapter_content(ch_num)
         if content:
             raw_chapters += f"\n\n=== Chương {ch_num} (trích) ===\n{content[:2000]}"
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import unicodedata
 from pathlib import Path
@@ -20,9 +21,18 @@ def _slugify(name: str) -> str:
     ascii_name = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
     return ascii_name.replace(" ", "_").replace("-", "_")
 
-_SCENE_WORKFLOW = "image_gen/workflows/txt2img_scene.json"
+_ANCHOR_WORKFLOW = "image_gen/workflows/anchor_gen.json"
 
 _NEGATIVE = (
+    # Hard NSFW block
+    "nsfw, nudity, naked, nude, nipples, pussy, penis, genitals, "
+    "underwear, lingerie, bikini, swimsuit, cleavage, navel, bare skin, "
+    "undressing, topless, bottomless, lewd, ecchi, explicit, uncensored, "
+    "alluring, seductive, suggestive, provocative, "
+    # Monster / non-human anatomy block
+    "(horn:1.5), (horns:1.5), (armor:1.5), (wings:1.5), (monster:1.5), "
+    "(tail:1.3), (claws:1.3), (fangs:1.3), demon, beast, creature, "
+    # Quality anti-tags
     "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, "
     "fewer digits, cropped, worst quality, low quality, normal quality, "
     "jpeg artifacts, signature, watermark, username, blurry, score_1, score_2"
@@ -45,11 +55,13 @@ def generate_character_anchors(force: bool = False) -> None:
 
 
 def _generate_single_anchor(character: Character, force: bool = False) -> Path:
-    """Generate anchor image for one character."""
+    """Generate 3 anchor views (front, 3/4, slight turn) per character.
+    IPAdapter works best with multiple reference angles to build stable embeddings.
+    The main anchor.png is the front view; views are stored alongside it.
+    """
     char_slug = _slugify(character.name)
-    anchor_path = (
-        Path(settings.data_dir) / "characters" / char_slug / "anchor.png"
-    )
+    anchor_dir = Path(settings.data_dir) / "characters" / char_slug
+    anchor_path = anchor_dir / "anchor.png"
 
     if anchor_path.exists() and not force:
         logger.debug(
@@ -57,26 +69,43 @@ def _generate_single_anchor(character: Character, force: bool = False) -> Path:
         )
         return anchor_path
 
-    anchor_path.parent.mkdir(parents=True, exist_ok=True)
+    anchor_dir.mkdir(parents=True, exist_ok=True)
 
-    scene_prompt = (
-        f"{character.description}, "
-        "full body portrait, anime style, manhua art style, 9:16 portrait, "
-        "detailed face, high quality, masterpiece, best quality, ultra detailed, "
-        "score_9, score_8_up, score_7_up"
-    )
+    base_seed = int(hashlib.md5(character.name.encode()).hexdigest(), 16) % (2**32)
 
-    comfyui_client.generate_image(
-        workflow_path=_SCENE_WORKFLOW,
-        replacements={
-            "SCENE_PROMPT": scene_prompt,
-            "NEGATIVE_PROMPT": _NEGATIVE,
-            "WIDTH": settings.image_width,
-            "HEIGHT": settings.image_height,
-            "SEED": abs(hash(character.name)) % (2**32),
-        },
-        output_path=anchor_path,
-    )
+    # 3 views with different angles — all close-up face focus
+    _VIEWS = [
+        ("anchor.png", "looking at viewer, front view"),
+        ("anchor_3q.png", "looking slightly to the side, three-quarter view"),
+        ("anchor_side.png", "looking to the side, profile view, side angle"),
+    ]
+
+    for filename, angle_tags in _VIEWS:
+        view_path = anchor_dir / filename
+        if view_path.exists() and not force:
+            continue
+
+        scene_prompt = (
+            f"{character.description}, "
+            f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
+            "anime style, manhua art style, plain background, "
+            "detailed face, high quality, masterpiece, best quality, ultra detailed"
+        )
+
+        comfyui_client.generate_image(
+            workflow_path=_ANCHOR_WORKFLOW,
+            replacements={
+                "SCENE_PROMPT": scene_prompt,
+                "NEGATIVE_PROMPT": _NEGATIVE,
+                "WIDTH": 768,
+                "HEIGHT": 768,
+                "SEED": base_seed + _VIEWS.index((filename, angle_tags)),
+            },
+            output_path=view_path,
+        )
+        logger.info(
+            "Generated anchor view | character={} view={}", character.name, filename
+        )
 
     # Update character JSON with anchor_path
     char_json = (
@@ -90,9 +119,17 @@ def _generate_single_anchor(character: Character, force: bool = False) -> Path:
         )
 
     logger.info(
-        "Generated anchor | character={} path={}", character.name, anchor_path
+        "Generated anchor set | character={} path={}", character.name, anchor_dir
     )
     return anchor_path
+
+
+def get_anchor_paths(character_name: str) -> list[Path]:
+    """Return all anchor view paths for a character (for IPAdapter batch)."""
+    char_slug = _slugify(character_name)
+    anchor_dir = Path(settings.data_dir) / "characters" / char_slug
+    views = [anchor_dir / f for f in ("anchor.png", "anchor_3q.png", "anchor_side.png")]
+    return [p for p in views if p.exists()]
 
 
 def get_anchor_path(character_name: str) -> Path:

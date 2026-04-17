@@ -1,58 +1,107 @@
 {
   "_meta": {
-    "description": "SDXL txt2img scene-only workflow (no characters / no IPAdapter). Uses Ink Wash LoRA for atmosphere.",
-    "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
-    "loras": ["ink_wash_painting.safetensors"],
+    "description": "SDXL txt2img scene-only workflow \u2014 DreamShaper XL Lightning + LoRA stack. No characters / no IPAdapter.",
+    "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
+    "note": "Lightning model: steps=8, cfg=2.0, sampler=dpmpp_sde, scheduler=karras. LoRAs retained \u2014 remove if artefacts appear.",
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
       "NEGATIVE_PROMPT": "Negative prompt",
-      "WIDTH": 720,
-      "HEIGHT": 1280,
+      "WIDTH": 768,
+      "HEIGHT": 1024,
       "SEED": 42
-    },
-    "required_nodes": ["CheckpointLoaderSimple", "CLIPTextEncode", "KSampler", "VAEDecode", "SaveImage", "LoraLoader"]
+    }
   },
   "1": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
+      "ckpt_name": "dreamshaperXL_lightningDPMSDE.safetensors"
     }
   },
   "2": {
     "class_type": "LoraLoader",
     "inputs": {
-      "model": ["1", 0],
-      "clip": ["1", 1],
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
       "lora_name": "ink_wash_painting.safetensors",
-      "strength_model": 0.6,
-      "strength_clip": 0.6
+      "strength_model": 0.85,
+      "strength_clip": 0.85
     }
   },
   "3": {
     "class_type": "LoraLoader",
     "inputs": {
-      "model": ["2", 0],
-      "clip": ["2", 1],
+      "model": [
+        "2",
+        0
+      ],
+      "clip": [
+        "2",
+        1
+      ],
       "lora_name": "xianxia_fantasy.safetensors",
+      "strength_model": 0.6,
+      "strength_clip": 0.6
+    }
+  },
+  "4": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "clip": [
+        "3",
+        1
+      ],
+      "lora_name": "manhua_style_v2.safetensors",
+      "strength_model": 1.0,
+      "strength_clip": 1.0
+    }
+  },
+  "5": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "4",
+        1
+      ],
+      "lora_name": "dark_horror_atmosphere.safetensors",
       "strength_model": 0.5,
       "strength_clip": 0.5
     }
   },
-  "4": {
+  "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, score_9, score_8_up, score_7_up, masterpiece, best quality, highly detailed",
-      "clip": ["3", 1]
+      "text": "__SCENE_PROMPT__, masterpiece, best quality, highly detailed, cinematic",
+      "clip": [
+        "5",
+        1
+      ]
     }
   },
-  "5": {
+  "10": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__NEGATIVE_PROMPT__, score_1, score_2, score_3, score_4, nsfw",
-      "clip": ["3", 1]
+      "text": "__NEGATIVE_PROMPT__, nsfw",
+      "clip": [
+        "5",
+        1
+      ]
     }
   },
-  "6": {
+  "11": {
     "class_type": "EmptyLatentImage",
     "inputs": {
       "width": "__WIDTH__",
@@ -60,32 +109,53 @@
       "batch_size": 1
     }
   },
-  "7": {
+  "12": {
     "class_type": "KSampler",
     "inputs": {
-      "model": ["3", 0],
-      "positive": ["4", 0],
-      "negative": ["5", 0],
-      "latent_image": ["6", 0],
+      "model": [
+        "5",
+        0
+      ],
+      "positive": [
+        "9",
+        0
+      ],
+      "negative": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ],
       "seed": "__SEED__",
-      "steps": 28,
-      "cfg": 6.0,
-      "sampler_name": "dpmpp_2m_sde",
+      "steps": 8,
+      "cfg": 2.0,
+      "sampler_name": "dpmpp_sde",
       "scheduler": "karras",
       "denoise": 1.0
     }
   },
-  "8": {
+  "13": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["7", 0],
-      "vae": ["1", 2]
+      "samples": [
+        "12",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
     }
   },
-  "9": {
+  "14": {
     "class_type": "SaveImage",
     "inputs": {
-      "images": ["8", 0],
+      "images": [
+        "13",
+        0
+      ],
       "filename_prefix": "scene"
     }
   }

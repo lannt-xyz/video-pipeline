@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "SDXL txt2img with LoRA stack + IPAdapter PLUS for full character identity transfer.",
+    "description": "SDXL txt2img with LoRA stack + dual IPAdapter PLUS for 2-character scenes.",
     "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
     "ipadapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
     "placeholders": {
@@ -9,7 +9,8 @@
       "WIDTH": 576,
       "HEIGHT": 1024,
       "SEED": 42,
-      "ANCHOR_PATH": "character_slug_anchor.png"
+      "ANCHOR_PATH": "char1_slug_anchor.png",
+      "ANCHOR_PATH_2": "char2_slug_anchor.png"
     }
   },
   "1": {
@@ -98,11 +99,29 @@
       "image": "__ANCHOR_PATH__"
     }
   },
+  "18": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_PATH_2__"
+    }
+  },
   "15": {
     "class_type": "PrepImageForClipVision",
     "inputs": {
       "image": [
         "17",
+        0
+      ],
+      "interpolation": "LANCZOS",
+      "crop_position": "center",
+      "sharpening": 0.0
+    }
+  },
+  "19": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": [
+        "18",
         0
       ],
       "interpolation": "LANCZOS",
@@ -125,9 +144,32 @@
         "15",
         0
       ],
-      "weight": 0.6,
+      "weight": 0.45,
       "weight_type": "ease in-out",
-      "combine_embeds": "concat",
+      "combine_embeds": "average",
+      "start_at": 0.0,
+      "end_at": 0.65,
+      "embeds_scaling": "K+V w/ C penalty"
+    }
+  },
+  "16": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "ipadapter": [
+        "6",
+        1
+      ],
+      "image": [
+        "19",
+        0
+      ],
+      "weight": 0.45,
+      "weight_type": "ease in-out",
+      "combine_embeds": "average",
       "start_at": 0.0,
       "end_at": 0.65,
       "embeds_scaling": "K+V w/ C penalty"
@@ -165,7 +207,7 @@
     "class_type": "KSampler",
     "inputs": {
       "model": [
-        "8",
+        "16",
         0
       ],
       "positive": [
@@ -208,7 +250,7 @@
         "13",
         0
       ],
-      "filename_prefix": "character_shot"
+      "filename_prefix": "character_shot_dual"
     }
   }
 }

@@ -1,22 +1,26 @@
 {
   "_meta": {
-    "description": "Thumbnail generation workflow \u2014 16:9 (1280x720) with title and CTA text overlay.",
+    "description": "SDXL txt2img anchor generation. Same 4 LoRAs as txt2img_ipadapter.json including dark_horror_atmosphere at matching strength (0.4) so anchor and chapter shots share the same aesthetic domain for IPAdapter feature matching.",
     "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
+    "loras": [
+      "ink_wash_painting.safetensors",
+      "xianxia_fantasy.safetensors",
+      "manhua_style_v2.safetensors",
+      "dark_horror_atmosphere.safetensors"
+    ],
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
       "NEGATIVE_PROMPT": "Negative prompt",
-      "WIDTH": 1280,
-      "HEIGHT": 720,
-      "SEED": 42,
-      "TITLE_TEXT": "T\u1eadp 1",
-      "CTA_TEXT": "Link bio \ud83d\udc47"
+      "WIDTH": 720,
+      "HEIGHT": 1280,
+      "SEED": 42
     },
     "required_nodes": [
       "CheckpointLoaderSimple",
+      "LoraLoader",
       "CLIPTextEncode",
       "KSampler",
       "VAEDecode",
-      "DrawText+",
       "SaveImage"
     ]
   },
@@ -37,32 +41,80 @@
         "1",
         1
       ],
+      "lora_name": "ink_wash_painting.safetensors",
+      "strength_model": 0.6,
+      "strength_clip": 0.6
+    }
+  },
+  "3": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "2",
+        0
+      ],
+      "clip": [
+        "2",
+        1
+      ],
+      "lora_name": "xianxia_fantasy.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5
+    }
+  },
+  "4": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "clip": [
+        "3",
+        1
+      ],
       "lora_name": "manhua_style_v2.safetensors",
       "strength_model": 0.7,
       "strength_clip": 0.7
     }
   },
-  "3": {
+  "5": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "4",
+        1
+      ],
+      "lora_name": "dark_horror_atmosphere.safetensors",
+      "strength_model": 0.4,
+      "strength_clip": 0.4
+    }
+  },
+  "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, masterpiece, best quality, cinematic, wide shot",
+      "text": "__SCENE_PROMPT__, masterpiece, best quality, highly detailed",
       "clip": [
-        "2",
+        "5",
         1
       ]
     }
   },
-  "4": {
+  "10": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "__NEGATIVE_PROMPT__, nsfw",
       "clip": [
-        "2",
+        "5",
         1
       ]
     }
   },
-  "5": {
+  "11": {
     "class_type": "EmptyLatentImage",
     "inputs": {
       "width": "__WIDTH__",
@@ -70,23 +122,23 @@
       "batch_size": 1
     }
   },
-  "6": {
+  "12": {
     "class_type": "KSampler",
     "inputs": {
       "model": [
-        "2",
+        "5",
         0
       ],
       "positive": [
-        "3",
+        "9",
         0
       ],
       "negative": [
-        "4",
+        "10",
         0
       ],
       "latent_image": [
-        "5",
+        "11",
         0
       ],
       "seed": "__SEED__",
@@ -97,11 +149,11 @@
       "denoise": 1.0
     }
   },
-  "7": {
+  "13": {
     "class_type": "VAEDecode",
     "inputs": {
       "samples": [
-        "6",
+        "12",
         0
       ],
       "vae": [
@@ -110,58 +162,14 @@
       ]
     }
   },
-  "8": {
-    "class_type": "DrawText+",
-    "inputs": {
-      "text": "__TITLE_TEXT__",
-      "font": "ShareTechMono-Regular.ttf",
-      "size": 72,
-      "color": "#FFFFFF",
-      "background_color": "#00000088",
-      "shadow_distance": 3,
-      "shadow_blur": 2,
-      "shadow_color": "#000000",
-      "horizontal_align": "left",
-      "vertical_align": "top",
-      "offset_x": 60,
-      "offset_y": 60,
-      "direction": "ltr",
-      "img_composite": [
-        "7",
-        0
-      ]
-    }
-  },
-  "9": {
-    "class_type": "DrawText+",
-    "inputs": {
-      "text": "__CTA_TEXT__",
-      "font": "ShareTechMono-Regular.ttf",
-      "size": 48,
-      "color": "#FFD700",
-      "background_color": "#00000088",
-      "shadow_distance": 3,
-      "shadow_blur": 2,
-      "shadow_color": "#000000",
-      "horizontal_align": "left",
-      "vertical_align": "bottom",
-      "offset_x": 60,
-      "offset_y": -60,
-      "direction": "ltr",
-      "img_composite": [
-        "8",
-        0
-      ]
-    }
-  },
-  "10": {
+  "14": {
     "class_type": "SaveImage",
     "inputs": {
       "images": [
-        "9",
+        "13",
         0
       ],
-      "filename_prefix": "thumbnail"
+      "filename_prefix": "character_anchor"
     }
   }
 }
