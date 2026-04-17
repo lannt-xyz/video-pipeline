@@ -142,10 +142,6 @@ Return JSON:
     stop=stop_after_attempt(settings.llm_max_retries),
     wait=wait_exponential(min=2, max=15),
 )
-@retry(
-    stop=stop_after_attempt(settings.llm_max_retries),
-    wait=wait_exponential(min=2, max=15),
-)
 def _generate_hook_shot(arc_text: str, episode_num: int) -> ShotScript:
     """Ask LLM to write exactly 1 hook shot for the episode opening."""
     prompt = (

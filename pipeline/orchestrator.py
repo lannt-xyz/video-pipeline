@@ -2,6 +2,7 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -9,6 +10,9 @@ from config.settings import settings
 from pipeline.state import StateDB
 from pipeline.validator import ValidationError, validator
 from pipeline.vram_manager import vram_manager
+
+if TYPE_CHECKING:
+    from image_gen.comfyui_client import ComfyUIClient
 
 PHASES = ["crawl", "llm", "images", "audio", "video", "validate"]
 
@@ -201,6 +205,26 @@ _NEGATIVE_BASE = (
 )
 
 
+def _generate_scene_fallback(
+    comfyui_client: "ComfyUIClient",
+    prompt_text: str,
+    seed: int,
+    output_path: Path,
+) -> None:
+    """Fallback: generate shot with txt2img_scene (no IPAdapter)."""
+    comfyui_client.generate_image(
+        "image_gen/workflows/txt2img_scene.json",
+        {
+            "SCENE_PROMPT": prompt_text,
+            "NEGATIVE_PROMPT": _NEGATIVE_BASE,
+            "WIDTH": settings.image_width,
+            "HEIGHT": settings.image_height,
+            "SEED": seed,
+        },
+        output_path,
+    )
+
+
 def _resolve_char_anchor_pairs(shot_characters: list, characters_map: dict) -> list:
     """Resolve the first 2 characters of a shot to (char_obj, anchors) pairs.
 
@@ -375,30 +399,14 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                             "episode={} shot={} frame={}",
                             episode_num, idx, fidx,
                         )
-                        fallback_wf = "image_gen/workflows/txt2img_scene.json"
-                        fallback_repl = {
-                            "SCENE_PROMPT": prompt_text,
-                            "NEGATIVE_PROMPT": _NEGATIVE_BASE,
-                            "WIDTH": settings.image_width,
-                            "HEIGHT": settings.image_height,
-                            "SEED": seed,
-                        }
-                        comfyui_client.generate_image(fallback_wf, fallback_repl, output_path)
+                        _generate_scene_fallback(comfyui_client, prompt_text, seed, output_path)
                 elif is_ipadapter:
                     logger.warning(
                         "IPAdapter workflow failed, falling back to txt2img_scene | "
                         "episode={} shot={} frame={} error={}",
                         episode_num, idx, fidx, str(exc)[:200],
                     )
-                    fallback_wf = "image_gen/workflows/txt2img_scene.json"
-                    fallback_repl = {
-                        "SCENE_PROMPT": prompt_text,
-                        "NEGATIVE_PROMPT": _NEGATIVE_BASE,
-                        "WIDTH": settings.image_width,
-                        "HEIGHT": settings.image_height,
-                        "SEED": seed,
-                    }
-                    comfyui_client.generate_image(fallback_wf, fallback_repl, output_path)
+                    _generate_scene_fallback(comfyui_client, prompt_text, seed, output_path)
                 else:
                     raise
             logger.info(

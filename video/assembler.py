@@ -23,7 +23,7 @@ def _zoompan_params(motion: MotionDirection, total_frames: int) -> dict:
     if motion == MotionDirection.ZOOM_IN:
         return {**base, "z": "zoom+0.0015", "x": "iw/2-(iw/zoom/2)", "y": "ih/2-(ih/zoom/2)"}
     elif motion == MotionDirection.ZOOM_OUT:
-        return {**base, "z": f"if(eq(on,1),1.15,zoom-0.0015)", "x": "iw/2-(iw/zoom/2)", "y": "ih/2-(ih/zoom/2)"}
+        return {**base, "z": "if(eq(on,1),1.15,zoom-0.0015)", "x": "iw/2-(iw/zoom/2)", "y": "ih/2-(ih/zoom/2)"}
     elif motion == MotionDirection.PAN_LEFT:
         return {**base, "z": "1.12", "x": f"(iw-iw/zoom)*(1-on/{d})", "y": "(ih-ih/zoom)/2"}
     elif motion == MotionDirection.PAN_RIGHT:
