@@ -40,6 +40,7 @@ PACING RULE:
 
 NARRATIVE RULES (most critical):
 - Each shot's narration_text tells what SPECIFICALLY happens — name the action, the character, the location.
+- Use the character names provided in the Characters list when they are clearly the character in the scene.
 - Shots must connect: the last sentence of shot N sets up shot N+1.
 - Voice: first-person narrator ("Tôi..."), present-tense tension.
 - FORBIDDEN phrases: "mọi chuyện leo thang", "những bí ẩn được hé lộ", "cuộc chiến tiếp tục", "các nhân vật xuất hiện".
@@ -68,9 +69,10 @@ scene_prompt must be a SHORT TAG LIST only. Structure:
 SCENE PROMPT QUALITY — Each scene_prompt MUST contain ALL of the following:
 1. At least 1 SPECIFIC LOCATION tag (NOT generic): "dimly lit coffin shop with wooden shelves", NOT just "coffin shop interior"
 2. At least 1 SPECIFIC ACTION or POSE tag: "figure lunging forward with wooden staff", NOT just "action pose" or "fighting"
-3. At least 1 FOREGROUND ELEMENT: something close to camera — "cracked stone tablet", "glowing talisman in hand", "overturned wooden chair"
-4. At least 1 BACKGROUND ELEMENT: environmental depth — "distant mountain peaks shrouded in fog", "torches lining corridor walls", "moonlit graveyard silhouettes"
-5. SPECIFIC LIGHTING description: "dim oil lantern casting long shadows on walls", NOT just "dramatic lighting"
+3. FOREGROUND LAYER (close to camera, 2+ elements): "cracked stone tablet and scattered ritual candles", "glowing talisman in hand near weathered pillar"
+4. MIDGROUND LAYER: where character stands — "stone staircase of ruined temple", "muddy excavation pit floor"
+5. BACKGROUND LAYER (depth, 2+ elements): "ancient crumbling gateway half-buried in fog, distant pine-covered mountain ridges" — always TWO background entities
+6. SPECIFIC LIGHTING description: "dim oil lantern casting long shadows on walls", NOT just "dramatic lighting"
 
 SCENE PROMPT EXAMPLES:
 WRONG: "coffin shop interior, intense fight scene, wooden shelves, dim lantern light, dynamic action pose, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
@@ -94,6 +96,7 @@ FORBIDDEN in scene_prompt:
 - Adverbs or qualifiers ("mysteriously", "fiercely", "inadvertently")
 - NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, skinny, undressing, erotic, sensual, mysterious aura, bedroom eyes
 - Generic placeholder tags: "dramatic lighting", "detailed background", "action pose", "fight scene" — be SPECIFIC
+- Extreme close-up framing tags: "extreme close-up", "extreme close-up detail", "face close-up", "macro shot" — these erase background context entirely. Use "medium close-up", "medium shot", or "wide shot" instead
 
 CLOTHING SAFETY RULE — CRITICAL for all scene_prompt:
 - Every scene_prompt with a human figure MUST include at least 2 of: fully clothed, high collar, long sleeves, covered body, modest clothing, traditional attire, armored, formal wear.
@@ -111,7 +114,7 @@ REQUIRED in scene_prompt:
 OTHER RULES:
 - duration_sec: 2 or 3 for shots 1–2; 6 for standard shots, 8 for climactic action shots.
 - is_key_shot: Mark EXACTLY 2-3 shots as true — the most action-packed.
-- characters: CRITICAL — list the EXACT character names (from the provided Characters list) visible in each shot. Most shots feature 1-2 characters. Use [] ONLY for pure scenery/environment shots with NO characters at all. At least 5 out of 8 shots MUST have non-empty characters.
+- characters: CRITICAL — list the EXACT character names (from the provided Characters list) whose body, face, or silhouette is PHYSICALLY VISIBLE in the shot. If the scene_prompt describes only environment, objects, or atmosphere with NO human figure present, use []. DO NOT add a character just because they are the narrator or implied. MAXIMUM 2 characters per shot — never list 3 or more.
 
 Return JSON:
 {
@@ -217,7 +220,7 @@ def _build_characters_ref(arc_char_names: List[str]) -> str:
 
     all_chars = load_all_characters()
     # Build a lookup: any known name/alias → Character
-    lookup: dict[str, "Character"] = {}
+    lookup: dict = {}
     for c in all_chars:
         lookup[c.name] = c
         for a in c.alias:
@@ -248,20 +251,27 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     chunks = _load_chunk_summaries(episode_num)
     # Enrich character names with aliases so LLM uses canonical names in shot.characters
     chars_ref = _build_characters_ref(arc.characters_in_episode)
+
+    # Always include arc-level context (key events give LLM the full episode arc)
+    arc_event_text = "\n".join(
+        f"Event {i+1}: {e}" for i, e in enumerate(arc.key_events)
+    )
+
     if chunks:
+        # No character limit on chunk summary — truncating loses the climax
         scenes_text = "\n\n".join(
-            f"Scene {i + 1} (chương {c['chapter_start']}-{c['chapter_end']}):\n{c['summary'][:400]}"
+            f"Scene {i + 1} (chương {c['chapter_start']}-{c['chapter_end']}):\n{c['summary']}"
             for i, c in enumerate(chunks)
         )
         arc_text = (
-            f"Characters: {chars_ref}\n\n"
-            f"ORDERED SCENES:\n\n{scenes_text}"
+            f"Episode arc (key events in order):\n{arc_event_text}\n\n"
+            f"Detailed scenes:\n\n{scenes_text}\n\n"
+            f"Characters: {chars_ref}"
         )
     else:
         arc_text = (
             f"Summary: {arc.arc_summary}\n\n"
-            f"ORDERED SCENES:\n"
-            + "\n".join(f"Scene {i+1}: {e}" for i, e in enumerate(arc.key_events))
+            f"ORDERED SCENES:\n{arc_event_text}"
             + f"\n\nCharacters: {chars_ref}"
         )
 
@@ -472,6 +482,9 @@ def _backfill_characters(
     for i in range(len(shots)):
         if shots[i].characters:
             continue  # keep LLM choice
+        # static_wide = intentionally scene-only shot — never backfill characters
+        if shots[i].camera_flow == CameraFlow.STATIC_WIDE:
+            continue
         if i <= 1:
             # Hook shots: main character
             shots[i] = shots[i].model_copy(update={"characters": [main_char]})

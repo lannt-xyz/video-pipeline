@@ -89,8 +89,7 @@ def _generate_single_anchor(character: Character, force: bool = False) -> Path:
             f"{character.description}, "
             f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
             "anime style, manhua art style, plain background, "
-            "detailed face, high quality, masterpiece, best quality, ultra detailed, "
-            "score_9, score_8_up, score_7_up"
+            "detailed face, high quality, masterpiece, best quality, ultra detailed"
         )
 
         comfyui_client.generate_image(

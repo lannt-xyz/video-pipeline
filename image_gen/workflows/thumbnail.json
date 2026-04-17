@@ -1,32 +1,42 @@
 {
   "_meta": {
-    "description": "Thumbnail generation workflow — 16:9 (1280x720) with title and CTA text overlay.",
-    "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
+    "description": "Thumbnail generation workflow \u2014 16:9 (1280x720) with title and CTA text overlay.",
+    "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
       "NEGATIVE_PROMPT": "Negative prompt",
       "WIDTH": 1280,
       "HEIGHT": 720,
       "SEED": 42,
-      "TITLE_TEXT": "Tập 1",
-      "CTA_TEXT": "Link bio 👇"
+      "TITLE_TEXT": "T\u1eadp 1",
+      "CTA_TEXT": "Link bio \ud83d\udc47"
     },
     "required_nodes": [
-      "CheckpointLoaderSimple", "CLIPTextEncode", "KSampler",
-      "VAEDecode", "DrawText+", "SaveImage"
+      "CheckpointLoaderSimple",
+      "CLIPTextEncode",
+      "KSampler",
+      "VAEDecode",
+      "DrawText+",
+      "SaveImage"
     ]
   },
   "1": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
+      "ckpt_name": "dreamshaperXL_lightningDPMSDE.safetensors"
     }
   },
   "2": {
     "class_type": "LoraLoader",
     "inputs": {
-      "model": ["1", 0],
-      "clip": ["1", 1],
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
       "lora_name": "manhua_style_v2.safetensors",
       "strength_model": 0.7,
       "strength_clip": 0.7
@@ -35,15 +45,21 @@
   "3": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, score_9, score_8_up, masterpiece, best quality, cinematic, wide shot",
-      "clip": ["2", 1]
+      "text": "__SCENE_PROMPT__, masterpiece, best quality, cinematic, wide shot",
+      "clip": [
+        "2",
+        1
+      ]
     }
   },
   "4": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__NEGATIVE_PROMPT__, score_1, score_2, score_3, nsfw",
-      "clip": ["2", 1]
+      "text": "__NEGATIVE_PROMPT__, nsfw",
+      "clip": [
+        "2",
+        1
+      ]
     }
   },
   "5": {
@@ -57,14 +73,26 @@
   "6": {
     "class_type": "KSampler",
     "inputs": {
-      "model": ["2", 0],
-      "positive": ["3", 0],
-      "negative": ["4", 0],
-      "latent_image": ["5", 0],
+      "model": [
+        "2",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ],
       "seed": "__SEED__",
-      "steps": 28,
-      "cfg": 6.5,
-      "sampler_name": "dpmpp_2m_sde",
+      "steps": 8,
+      "cfg": 2.0,
+      "sampler_name": "dpmpp_sde",
       "scheduler": "karras",
       "denoise": 1.0
     }
@@ -72,8 +100,14 @@
   "7": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["6", 0],
-      "vae": ["1", 2]
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
     }
   },
   "8": {
@@ -92,7 +126,10 @@
       "offset_x": 60,
       "offset_y": 60,
       "direction": "ltr",
-      "img_composite": ["7", 0]
+      "img_composite": [
+        "7",
+        0
+      ]
     }
   },
   "9": {
@@ -111,13 +148,19 @@
       "offset_x": 60,
       "offset_y": -60,
       "direction": "ltr",
-      "img_composite": ["8", 0]
+      "img_composite": [
+        "8",
+        0
+      ]
     }
   },
   "10": {
     "class_type": "SaveImage",
     "inputs": {
-      "images": ["9", 0],
+      "images": [
+        "9",
+        0
+      ],
       "filename_prefix": "thumbnail"
     }
   }

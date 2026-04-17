@@ -1,43 +1,96 @@
 {
   "_meta": {
-    "description": "SDXL txt2img with dual IPAdapter PLUS FACE for 2-character scenes. No LoRAs.",
-    "checkpoint": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
-    "ipadapter": "ip-adapter-plus-face_sdxl_vit-h.safetensors",
+    "description": "SDXL txt2img with LoRA stack + dual IPAdapter PLUS for 2-character scenes.",
+    "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
+    "ipadapter": "ip-adapter-plus_sdxl_vit-h.safetensors",
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
       "NEGATIVE_PROMPT": "Negative prompt",
-      "WIDTH": 720,
-      "HEIGHT": 1280,
+      "WIDTH": 576,
+      "HEIGHT": 1024,
       "SEED": 42,
       "ANCHOR_PATH": "char1_slug_anchor.png",
       "ANCHOR_PATH_2": "char2_slug_anchor.png"
-    },
-    "required_nodes": [
-      "CheckpointLoaderSimple",
-      "CLIPTextEncode",
-      "KSampler",
-      "VAEDecode",
-      "SaveImage",
-      "IPAdapterUnifiedLoader",
-      "IPAdapterAdvanced",
-      "PrepImageForClipVision",
-      "LoadImage"
-    ]
+    }
   },
   "1": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
+      "ckpt_name": "dreamshaperXL_lightningDPMSDE.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "lora_name": "ink_wash_painting.safetensors",
+      "strength_model": 0.6,
+      "strength_clip": 0.6
+    }
+  },
+  "3": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "2",
+        0
+      ],
+      "clip": [
+        "2",
+        1
+      ],
+      "lora_name": "xianxia_fantasy.safetensors",
+      "strength_model": 0.5,
+      "strength_clip": 0.5
+    }
+  },
+  "4": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "clip": [
+        "3",
+        1
+      ],
+      "lora_name": "manhua_style_v2.safetensors",
+      "strength_model": 0.7,
+      "strength_clip": 0.7
+    }
+  },
+  "5": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "4",
+        1
+      ],
+      "lora_name": "dark_horror_atmosphere.safetensors",
+      "strength_model": 0.4,
+      "strength_clip": 0.4
     }
   },
   "6": {
     "class_type": "IPAdapterUnifiedLoader",
     "inputs": {
       "model": [
-        "1",
+        "5",
         0
       ],
-      "preset": "PLUS FACE (portraits)"
+      "preset": "PLUS (high strength)"
     }
   },
   "17": {
@@ -91,11 +144,11 @@
         "15",
         0
       ],
-      "weight": 0.75,
-      "weight_type": "linear",
-      "combine_embeds": "concat",
+      "weight": 0.45,
+      "weight_type": "ease in-out",
+      "combine_embeds": "average",
       "start_at": 0.0,
-      "end_at": 0.85,
+      "end_at": 0.65,
       "embeds_scaling": "K+V w/ C penalty"
     }
   },
@@ -114,20 +167,20 @@
         "19",
         0
       ],
-      "weight": 0.75,
-      "weight_type": "linear",
-      "combine_embeds": "concat",
+      "weight": 0.45,
+      "weight_type": "ease in-out",
+      "combine_embeds": "average",
       "start_at": 0.0,
-      "end_at": 0.85,
+      "end_at": 0.65,
       "embeds_scaling": "K+V w/ C penalty"
     }
   },
   "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, score_9, score_8_up, score_7_up, masterpiece, best quality, highly detailed",
+      "text": "__SCENE_PROMPT__, masterpiece, best quality, highly detailed",
       "clip": [
-        "1",
+        "5",
         1
       ]
     }
@@ -135,9 +188,9 @@
   "10": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__NEGATIVE_PROMPT__, score_1, score_2, score_3, score_4, nsfw",
+      "text": "__NEGATIVE_PROMPT__, nsfw",
       "clip": [
-        "1",
+        "5",
         1
       ]
     }
@@ -170,9 +223,9 @@
         0
       ],
       "seed": "__SEED__",
-      "steps": 28,
-      "cfg": 6.0,
-      "sampler_name": "dpmpp_2m_sde",
+      "steps": 8,
+      "cfg": 2.0,
+      "sampler_name": "dpmpp_sde",
       "scheduler": "karras",
       "denoise": 1.0
     }

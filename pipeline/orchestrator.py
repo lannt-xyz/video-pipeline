@@ -178,6 +178,27 @@ def _extract_dna_tags(description: str) -> str:
     return ", ".join(dna)
 
 
+_CLOTHING_KEYWORDS = frozenset([
+    "jacket", "pants", "robe", "robes", "dress", "blouse", "skirt", "shirt",
+    "coat", "hanfu", "clothing", "wear", "outfit", "attire", "suit", "uniform",
+    "apron",
+])
+
+
+def _extract_clothing_tags(description: str) -> str:
+    """Extract only clothing/outfit tags from a character description.
+
+    Returns a weighted tag string like "(dark jacket, dark pants:1.2)" for
+    injection into the positive prompt to lock character outfit.
+    If no clothing tags found, returns empty string.
+    """
+    tags = [t.strip() for t in description.split(",") if t.strip()]
+    clothing = [t for t in tags if any(kw in t.lower() for kw in _CLOTHING_KEYWORDS)]
+    if not clothing:
+        return ""
+    return "(" + ", ".join(clothing) + ":1.2)"
+
+
 _NEGATIVE_BASE = (
     # Hard NSFW block — must come first for PonyXL
     "nsfw, nudity, naked, nude, nipples, pussy, penis, genitals, "
@@ -234,11 +255,15 @@ def _build_shot_image_params(
     Injects DNA tags into single-character prompts to reinforce IPAdapter.
     """
     has_female = any(c is not None and c.gender == "female" for c, _ in char_anchor_pairs)
-    negative = (
+    negative_base = (
         _NEGATIVE_BASE + ", (male:1.5), (masculine:1.3), 1boy"
         if has_female
         else _NEGATIVE_BASE
     )
+
+    # Anti-split tags: prevent PonyXL from tiling multiple figures into a grid
+    _ANTI_SPLIT_DUAL = ", (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5), (4girls:1.5), (4boys:1.5)"
+    _ANTI_SPLIT_SINGLE = ", (2girls:1.5), (2boys:1.5), (multiple girls:1.5), (multiple boys:1.5), (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5)"
 
     if len(char_anchor_pairs) >= 2:
         genders = [c.gender if c else "male" for c, _ in char_anchor_pairs]
@@ -252,7 +277,7 @@ def _build_shot_image_params(
             # Dual-char: IPAdapter anchors carry both visual identities;
             # text only needs count tag + scene (avoid DNA tag conflicts between chars)
             "SCENE_PROMPT": f"{count_tag}, {prompt_text}",
-            "NEGATIVE_PROMPT": negative,
+            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_DUAL,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
             "SEED": seed,
@@ -262,17 +287,19 @@ def _build_shot_image_params(
     elif len(char_anchor_pairs) == 1:
         char_obj, anchors = char_anchor_pairs[0]
         gender_tag = "1girl" if (char_obj and char_obj.gender == "female") else "1boy"
-        # Inject hard DNA tags (hair/eyes/face/body only) to reinforce IPAdapter
+        # Inject DNA tags (hair/eyes/face/body) to reinforce IPAdapter face match
         dna_text = _extract_dna_tags(char_obj.description) if char_obj else ""
-        scene_prompt = (
-            f"{gender_tag}, {dna_text}, {prompt_text}"
-            if dna_text
-            else f"{gender_tag}, {prompt_text}"
-        )
+        # Inject clothing tags with weight 1.2 to lock outfit matching anchor
+        clothing_text = _extract_clothing_tags(char_obj.description) if char_obj else ""
+        # Scene-first ordering: background/environment gets higher priority than character tags.
+        # Wrapping scene in (…:1.2) prevents IPAdapter from crowding out the background.
+        weighted_scene = f"({prompt_text}:1.2)" if prompt_text else ""
+        parts = [p for p in [weighted_scene, gender_tag, "solo", clothing_text, dna_text] if p]
+        scene_prompt = ", ".join(parts)
         workflow = "image_gen/workflows/txt2img_ipadapter.json"
         replacements = {
             "SCENE_PROMPT": scene_prompt,
-            "NEGATIVE_PROMPT": negative,
+            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
             "SEED": seed,
@@ -287,7 +314,7 @@ def _build_shot_image_params(
         workflow = "image_gen/workflows/txt2img_scene.json"
         replacements = {
             "SCENE_PROMPT": prompt_text,
-            "NEGATIVE_PROMPT": negative,
+            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
             "SEED": seed,
@@ -326,7 +353,12 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     db.record_phase_start(episode_num, "images")
 
     for idx, shot in enumerate(script.shots):
-        char_anchor_pairs = _resolve_char_anchor_pairs(shot.characters, characters_map)
+        # Short-circuit: empty characters → scene-only workflow, skip anchor resolution
+        char_anchor_pairs = (
+            []
+            if not shot.characters
+            else _resolve_char_anchor_pairs(shot.characters, characters_map)
+        )
 
         # Generate each frame for this shot
         frames = shot.frames if shot.frames else [None]
@@ -712,7 +744,11 @@ def probe_images(episode_num: int, gen_shots: int = 0) -> None:
             print(f"  Shot {idx:02d}: already exists, skipping")
             continue
 
-        char_anchor_pairs = _resolve_char_anchor_pairs(shot.characters, characters_map)
+        char_anchor_pairs = (
+            []
+            if not shot.characters
+            else _resolve_char_anchor_pairs(shot.characters, characters_map)
+        )
         seed = episode_num * 10000 + idx * 100
         workflow, replacements = _build_shot_image_params(
             shot.scene_prompt, char_anchor_pairs, seed

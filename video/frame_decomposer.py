@@ -11,23 +11,27 @@ _MIN_DURATION_FOR_MULTI_FRAME = 4.0
 # Each entry: (camera_tag_prefix, motion_direction)
 _FLOW_FRAMES = {
     CameraFlow.WIDE_TO_CLOSE: [
+        # Frame 0: wide — establish environment; Frame 1: medium — focus on character
         ("wide establishing shot, ", MotionDirection.ZOOM_IN),
-        ("close-up shot, ", MotionDirection.ZOOM_IN),
+        ("medium shot, ", MotionDirection.ZOOM_IN),
     ],
     CameraFlow.CLOSE_TO_WIDE: [
-        ("extreme close-up, ", MotionDirection.ZOOM_OUT),
-        ("medium shot, ", MotionDirection.ZOOM_OUT),
+        # Frame 0: medium close-up — enough face + near background visible
+        ("medium close-up, ", MotionDirection.ZOOM_OUT),
+        ("wide shot, ", MotionDirection.ZOOM_OUT),
     ],
     CameraFlow.PAN_ACROSS: [
-        ("left side view, ", MotionDirection.PAN_RIGHT),
-        ("right side view, ", MotionDirection.PAN_LEFT),
+        ("left side wide shot, ", MotionDirection.PAN_RIGHT),
+        ("right side wide shot, ", MotionDirection.PAN_LEFT),
     ],
     CameraFlow.DETAIL_REVEAL: [
-        ("extreme close-up detail, ", MotionDirection.ZOOM_OUT),
+        # Was "extreme close-up detail" — caused background to disappear entirely.
+        # "close-up detail" still focuses on object but retains surrounding context.
+        ("close-up detail, ", MotionDirection.ZOOM_OUT),
         ("medium wide shot, ", MotionDirection.ZOOM_OUT),
     ],
     CameraFlow.STATIC_CLOSE: [
-        ("close-up shot, ", MotionDirection.ZOOM_IN),
+        ("medium close-up, ", MotionDirection.ZOOM_IN),
     ],
     CameraFlow.STATIC_WIDE: [
         ("wide establishing shot, ", MotionDirection.PAN_RIGHT),

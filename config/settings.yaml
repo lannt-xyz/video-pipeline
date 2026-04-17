@@ -18,9 +18,10 @@ llm_context_size: 16384
 comfyui_timeout: 300
 comfyui_poll_interval: 2
 
-# Image generation (9:16 portrait)
-image_width: 720
-image_height: 1280
+# Image generation (9:16 portrait) — 768x1024 gives wider canvas for background depth
+# while staying within 8GB VRAM budget for PonyXL SDXL
+image_width: 768
+image_height: 1024
 
 # Thumbnail (16:9 landscape)
 thumbnail_width: 1280

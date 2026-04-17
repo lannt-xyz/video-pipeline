@@ -179,6 +179,7 @@ class ComfyUIClient:
             else:
                 resolved[key] = value
         workflow = self._load_workflow(workflow_path, resolved)
+        self._save_prompt_debug(workflow, output_path)
         prompt_id = self.submit_prompt(workflow)
         result = self.poll_result(prompt_id)
 
@@ -198,6 +199,23 @@ class ComfyUIClient:
         output_path.write_bytes(file_bytes)
         logger.info("File downloaded | path={}", output_path)
         return output_path
+
+    def _save_prompt_debug(self, workflow: dict, output_path: Path) -> None:
+        """Persist the final workflow JSON sent to ComfyUI for debugging.
+
+        Uses parent folder name as prefix to avoid collisions when multiple
+        characters share the same filename (e.g. anchor.png → diep_binh_anchor.json).
+        """
+        debug_dir = Path("logs/comfyui_prompts")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        parent_name = output_path.parent.name
+        stem = output_path.stem
+        debug_name = f"{parent_name}_{stem}" if parent_name and parent_name != "." else stem
+        debug_file = debug_dir / f"{debug_name}.json"
+        debug_file.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.debug("ComfyUI prompt saved | path={}", debug_file)
 
     def _load_workflow(self, workflow_path: str, replacements: dict) -> dict:
         """Load workflow JSON and replace __KEY__ placeholders.
