@@ -14,7 +14,7 @@ from pipeline.vram_manager import vram_manager
 if TYPE_CHECKING:
     from image_gen.comfyui_client import ComfyUIClient
 
-PHASES = ["crawl", "llm", "images", "audio", "video", "validate"]
+PHASES = ["llm", "images", "audio", "video", "validate"]
 
 
 def setup_logging(episode_num: int = None) -> None:
@@ -44,59 +44,6 @@ def _episode_chapter_range(episode_num: int) -> tuple[int, int]:
     start = (episode_num - 1) * settings.chapters_per_episode + 1
     end = min(episode_num * settings.chapters_per_episode, settings.total_chapters)
     return start, end
-
-
-# ── Phase runners ─────────────────────────────────────────────────────────────
-
-def run_crawl(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
-    from crawler.scraper import crawl_chapters
-    from crawler.storage import save_chapter
-    import asyncio
-
-    chapter_start, chapter_end = _episode_chapter_range(episode_num)
-    db.upsert_episode(episode_num, chapter_start, chapter_end)
-
-    chapters_dir = Path(settings.data_dir) / "chapters"
-    db_crawled = set(db.get_crawled_chapters(chapter_start, chapter_end))
-    # Cross-check: chapter DB says crawled but file missing → re-crawl it
-    actually_crawled = {
-        n for n in db_crawled
-        if (chapters_dir / f"chuong-{n:04d}.txt").exists()
-    }
-    missing_from_disk = db_crawled - actually_crawled
-    if missing_from_disk:
-        logger.warning(
-            "{} chapters in DB but missing on disk, will re-crawl | chapters={}",
-            len(missing_from_disk), sorted(missing_from_disk)[:10],
-        )
-    to_crawl = [n for n in range(chapter_start, chapter_end + 1) if n not in actually_crawled]
-
-    if not to_crawl:
-        logger.info("All chapters already crawled | episode={}", episode_num)
-        db.set_episode_status(episode_num, "CRAWLED")
-        return
-
-    logger.info(
-        "Crawling {} chapters | episode={} range={}-{}",
-        len(to_crawl), episode_num, chapter_start, chapter_end,
-    )
-
-    if dry_run:
-        logger.info("[dry-run] Skipping crawl | episode={}", episode_num)
-        db.set_episode_status(episode_num, "CRAWLED")
-        return
-
-    db.record_phase_start(episode_num, "crawl")
-    chapters = asyncio.run(
-        crawl_chapters(to_crawl, on_fetched=lambda c: save_chapter(c, db))
-    )
-    db.record_phase_done(episode_num, "crawl")
-
-    failed = [c for c in chapters if c.status == "ERROR"]
-    if failed:
-        logger.warning("{} chapters failed | episode={}", len(failed), episode_num)
-
-    db.set_episode_status(episode_num, "CRAWLED")
 
 
 def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
@@ -578,7 +525,6 @@ def run_validate(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
 
 _PHASE_RUNNERS = {
-    "crawl": run_crawl,
     "llm": run_llm,
     "images": run_images,
     "audio": run_audio,
@@ -591,14 +537,16 @@ _PHASE_RUNNERS = {
 
 def run_episode(
     episode_num: int,
-    from_phase: str = "crawl",
+    from_phase: str = "llm",
     dry_run: bool = False,
 ) -> None:
     db = StateDB()
     setup_logging(episode_num)
+    chapter_start, chapter_end = _episode_chapter_range(episode_num)
+    db.upsert_episode(episode_num, chapter_start, chapter_end)
 
     current_status = db.get_episode_status(episode_num)
-    if from_phase != "crawl" and current_status:
+    if from_phase != "llm" and current_status:
         db.reset_episode_to_phase(episode_num, from_phase)
 
     start_idx = PHASES.index(from_phase)
@@ -636,7 +584,7 @@ def run_episode(
 
 def run_pipeline(
     from_episode: int = 1,
-    from_phase: str = "crawl",
+    from_phase: str = "llm",
     dry_run: bool = False,
 ) -> None:
     db = StateDB()
@@ -666,8 +614,8 @@ def run_pipeline(
                 ep, str(exc),
             )
 
-        # Only first episode may start from non-crawl phase
-        from_phase = "crawl"
+        # Only first episode may start from non-llm phase
+        from_phase = "llm"
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
@@ -783,7 +731,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--from-phase",
-        default="crawl",
+        default="llm",
         choices=PHASES,
         metavar="PHASE",
         help=f"Start from phase: {', '.join(PHASES)}",

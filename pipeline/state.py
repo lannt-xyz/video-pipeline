@@ -24,8 +24,7 @@ EPISODE_STATES = [
 ]
 
 _PHASE_TO_RESET_STATUS = {
-    "crawl": "PENDING",
-    "llm": "CRAWLED",
+    "llm": "PENDING",
     "images": "SCRIPTED",
     "audio": "IMAGES_DONE",
     "video": "AUDIO_DONE",
@@ -62,6 +61,7 @@ class StateDB:
                     chapter_num INTEGER PRIMARY KEY,
                     title       TEXT,
                     url         TEXT,
+                    content     TEXT,
                     file_path   TEXT,
                     status      TEXT NOT NULL DEFAULT 'PENDING',
                     crawled_at  TIMESTAMP,
@@ -89,6 +89,14 @@ class StateDB:
                 );
             """)
 
+            # Backward-compat migration for existing DBs created before `content` column.
+            chapter_cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(chapters)").fetchall()
+            }
+            if "content" not in chapter_cols:
+                conn.execute("ALTER TABLE chapters ADD COLUMN content TEXT")
+
     # ── Chapters ──────────────────────────────────────────────────────────────
 
     def upsert_chapter(
@@ -99,21 +107,23 @@ class StateDB:
         file_path: str,
         status: str,
         crawled_at: Optional[datetime] = None,
+        content: Optional[str] = None,
     ) -> None:
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO chapters (chapter_num, title, url, file_path, status, crawled_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO chapters (chapter_num, title, url, content, file_path, status, crawled_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chapter_num) DO UPDATE SET
                     title=excluded.title,
                     url=excluded.url,
+                    content=COALESCE(excluded.content, chapters.content),
                     file_path=excluded.file_path,
                     status=excluded.status,
                     crawled_at=excluded.crawled_at,
                     error_msg=NULL
                 """,
-                (chapter_num, title, url, file_path, status, crawled_at),
+                (chapter_num, title, url, content, file_path, status, crawled_at),
             )
 
     def set_chapter_status(
@@ -142,6 +152,40 @@ class StateDB:
                 (chapter_start, chapter_end),
             ).fetchall()
             return [r["chapter_num"] for r in rows]
+
+    def get_chapter_content(self, chapter_num: int) -> Optional[str]:
+        """Load chapter text from DB content; fallback to chapter file path when needed."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT content, file_path FROM chapters WHERE chapter_num=?",
+                (chapter_num,),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        content = (row["content"] or "").strip()
+        if content:
+            return content
+
+        file_path = row["file_path"]
+        if not file_path:
+            return None
+
+        path = Path(file_path)
+        if not path.exists():
+            return None
+
+        try:
+            return path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning(
+                "Failed reading chapter file | chapter={} path={} error={}",
+                chapter_num,
+                file_path,
+                exc,
+            )
+            return None
 
     # ── Episodes ──────────────────────────────────────────────────────────────
 
@@ -243,7 +287,7 @@ class StateDB:
 
     def estimate_eta(self, remaining_episodes: int) -> Optional[float]:
         """Estimate remaining time (seconds) based on completed episode timings."""
-        phases = ["crawl", "llm", "images", "audio", "video"]
+        phases = ["llm", "images", "audio", "video"]
         total = 0.0
         for phase in phases:
             avg = self.get_avg_phase_duration(phase)

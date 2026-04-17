@@ -29,6 +29,8 @@ data/characters/
 # Database
 db/pipeline.db
 db/*.db
+data/*.db
+data/*/*.db
 
 # Logs
 logs/

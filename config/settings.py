@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, List, Tuple, Type
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
 
 _PROJECT_ROOT = Path(__file__).parent.parent
@@ -31,9 +31,10 @@ class Settings(BaseSettings):
             YamlConfigSettingsSource(settings_cls),
         )
 
-    # Story source — swap story = change these 3 fields only
+    # Story key
     story_slug: str = "mao-son-troc-quy-nhan"
-    base_url: str = "https://truyencv.io/truyen/{story_slug}/chuong-{n}/"
+
+    # Episode planning
     total_chapters: int = 3534
     chapters_per_episode: int = 35
 
@@ -76,14 +77,10 @@ class Settings(BaseSettings):
     enable_svd: bool = False
 
     # Paths
-    data_dir: str = "data"
-    db_path: str = "db/pipeline.db"
+    data_dir: str = "data/{story_slug}"
+    db_path: str = "data/{story_slug}/{story_slug}.db"
     logs_dir: str = "logs"
     assets_dir: str = "assets"
-
-    # Crawler
-    crawler_rate_limit: float = 1.0
-    crawler_max_retries: int = 5
 
     # LoRA weights
     lora_weights: dict = {}
@@ -102,12 +99,28 @@ class Settings(BaseSettings):
             raise ValueError("chapters_per_episode must be positive")
         return v
 
-    def get_chapter_url(self, chapter_num: int) -> str:
-        return (
-            self.base_url
-            .replace("{story_slug}", self.story_slug)
-            .replace("{n}", str(chapter_num))
-        )
+    @model_validator(mode="after")
+    def resolve_story_paths(self) -> "Settings":
+        """Ensure data/db paths are always scoped by story_slug."""
+        slug = self.story_slug.strip()
+        if not slug:
+            raise ValueError("story_slug must not be empty")
+
+        data_tpl = self.data_dir.replace("{story_slug}", slug)
+        data_path = Path(data_tpl)
+        if data_path.name != slug:
+            data_path = data_path / slug
+        self.data_dir = str(data_path)
+
+        db_tpl = self.db_path.replace("{story_slug}", slug)
+        db_candidate = Path(db_tpl)
+        db_name = f"{slug}.db"
+        if db_candidate.name != db_name:
+            self.db_path = str(data_path / db_name)
+        else:
+            self.db_path = str(data_path / db_candidate.name)
+
+        return self
 
     @property
     def total_episodes(self) -> int:

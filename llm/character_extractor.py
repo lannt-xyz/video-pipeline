@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from config.settings import settings
 from llm.client import ollama_client
 from models.schemas import Character
+from pipeline.state import StateDB
 
 _EXTRACTOR_SYSTEM = """You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL Danbooru model).
 Your job: read Vietnamese story context and produce a clean Danbooru tag list for each character.
@@ -147,10 +148,10 @@ def extract_all_characters(force: bool = False) -> List[Character]:
     ]
 
     # Load a few raw chapters for extra appearance hints (first 3 chapters only)
-    from crawler.storage import load_chapter_content
+    db = StateDB()
     raw_chapters = ""
     for ch_num in range(1, 4):
-        content = load_chapter_content(ch_num)
+        content = db.get_chapter_content(ch_num)
         if content:
             raw_chapters += f"\n\n=== Chương {ch_num} (trích) ===\n{content[:2000]}"
 
