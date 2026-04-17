@@ -250,9 +250,22 @@ def _build_xfade_command(
         )
         cumulative_offset = offset
 
-    # Audio: concat all audio streams (xfade is video-only, audio overlaps naturally)
-    audio_inputs = "".join(f"[{i}:a]" for i in range(n))
-    filters.append(f"{audio_inputs}concat=n={n}:v=0:a=1[aout]")
+    # Audio: trim each clip's audio to the duration until the next xfade starts,
+    # so audio switches in sync with when each video stream becomes dominant.
+    # Without this, concat audio is (n-1)*transition_dur longer than the xfade
+    # video, causing ~0.3s of accumulated A/V drift per shot transition.
+    # Last clip keeps full audio since there is no following xfade.
+    for i, d in enumerate(durations):
+        if i < n - 1:
+            trim_end = min(d, max(0.1, d - transition_dur))
+            filters.append(
+                f"[{i}:a]atrim=0:{trim_end:.4f},asetpts=PTS-STARTPTS[a{i}]"
+            )
+        else:
+            filters.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
+
+    audio_concat_inputs = "".join(f"[a{i}]" for i in range(n))
+    filters.append(f"{audio_concat_inputs}concat=n={n}:v=0:a=1[aout]")
 
     filter_str = ";".join(filters)
 
