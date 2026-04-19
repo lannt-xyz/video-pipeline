@@ -142,6 +142,43 @@ Return JSON:
 { "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "static_close" }"""
 
 
+def _coerce_shot_item(item: object, episode_num: int, index: int) -> dict | None:
+    """Coerce a single shot item from Ollama output into a plain dict.
+
+    Ollama occasionally returns shots as JSON strings instead of objects.
+    Returns None when the item cannot be interpreted as a shot dict.
+    """
+    if isinstance(item, dict):
+        return item
+
+    if isinstance(item, str):
+        text = item.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                logger.debug(
+                    "Shot {} was a JSON string — parsed as dict | episode={}",
+                    index, episode_num,
+                )
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        logger.warning(
+            "Shot {} is a plain string (not JSON object) — skipping | episode={} value={!r}",
+            index, episode_num, text[:120],
+        )
+        return None
+
+    logger.warning(
+        "Shot {} has unexpected type {}; skipping | episode={}",
+        index, type(item).__name__, episode_num,
+    )
+    return None
+
+
 @retry(
     stop=stop_after_attempt(settings.llm_max_retries),
     wait=wait_exponential(min=2, max=15),
@@ -155,7 +192,10 @@ def _generate_hook_shot(arc_text: str, episode_num: int) -> ShotScript:
     raw = ollama_client.generate_json(
         prompt=prompt, system=_HOOK_SYSTEM, temperature=0.8
     )
-    return ShotScript(**raw)
+    shot_data = raw if isinstance(raw, dict) else _coerce_shot_item(raw, episode_num, 0)
+    if shot_data is None:
+        raise ValueError(f"Hook shot response is not a valid dict | episode={episode_num}")
+    return ShotScript(**shot_data)
 
 
 @retry(
@@ -176,6 +216,20 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
 
 _MAX_SHOTS_PER_EPISODE = 8  # shots that fit in one video; excess flows to next episode
 _ID_LIKE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
+_SCENE_ALIGN_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(dù|ô)\b", re.IGNORECASE), "red umbrella"),
+    (re.compile(r"\b(nhang|hương)\b", re.IGNORECASE), "burning incense sticks"),
+    (re.compile(r"quan tài|nắp quan", re.IGNORECASE), "red lacquered coffin"),
+    (re.compile(r"dao găm|dao", re.IGNORECASE), "dagger in hand"),
+    (re.compile(r"\bđinh\b", re.IGNORECASE), "rusted coffin nails"),
+    (re.compile(r"chậu đồng", re.IGNORECASE), "bronze ritual basin"),
+    (re.compile(r"bùa|phù|chu sa", re.IGNORECASE), "yellow talisman paper"),
+    (re.compile(r"la bàn", re.IGNORECASE), "feng shui compass"),
+    (re.compile(r"xé( toạc)? áo|rách áo", re.IGNORECASE), "torn clothing"),
+    (re.compile(r"vết cắn|dấu răng", re.IGNORECASE), "bite mark on shoulder"),
+    (re.compile(r"co giật|ngã xuống|sụp", re.IGNORECASE), "body collapsing violently"),
+    (re.compile(r"gào|thét|khóc", re.IGNORECASE), "screaming expression"),
+]
 
 
 def _load_carryover(episode_num: int) -> List[ShotScript]:
@@ -286,7 +340,17 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
         logger.info("Writing script | episode={}", episode_num)
         raw = _write_raw(arc_text, episode_num)
         raw_title = raw.get("title", raw_title)
-        new_shots = [ShotScript(**s) for s in raw["shots"]]
+        raw_shots = raw.get("shots", [])
+        if not isinstance(raw_shots, list):
+            logger.warning(
+                "shots field is not a list (type={}); resetting to empty | episode={}",
+                type(raw_shots).__name__, episode_num,
+            )
+            raw_shots = []
+        coerced = [
+            _coerce_shot_item(s, episode_num, i) for i, s in enumerate(raw_shots)
+        ]
+        new_shots = [ShotScript(**d) for d in coerced if d is not None]
         all_shots.extend(new_shots)
     else:
         logger.info("Using carry-over shots | episode={} shots={}", episode_num, len(all_shots))
@@ -317,6 +381,7 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
     episode_shots = _normalize_camera_flow(episode_shots, episode_num)
     episode_shots = _backfill_characters(episode_shots, arc.characters_in_episode, episode_num)
+    episode_shots = _align_scene_prompt_with_narration(episode_shots, episode_num)
 
     script = EpisodeScript(
         episode_num=episode_num,
@@ -499,3 +564,41 @@ def _backfill_characters(
             shots[i] = shots[i].model_copy(update={"characters": assigned})
 
     return shots
+
+
+def _align_scene_prompt_with_narration(
+    shots: List[ShotScript],
+    episode_num: int,
+) -> List[ShotScript]:
+    """Inject missing visual tags into scene_prompt based on narration_text.
+
+    This deterministic pass reduces semantic drift between narration and visuals
+    without calling LLM again.
+    """
+    aligned = 0
+    updated: List[ShotScript] = []
+
+    for shot in shots:
+        scene_tags = [t.strip() for t in shot.scene_prompt.split(",") if t.strip()]
+        scene_lower = {t.lower() for t in scene_tags}
+
+        extra_tags: List[str] = []
+        for pattern, tag in _SCENE_ALIGN_RULES:
+            if pattern.search(shot.narration_text) and tag.lower() not in scene_lower:
+                extra_tags.append(tag)
+
+        # Keep alignment hints lightweight to avoid prompt bloat.
+        if extra_tags:
+            merged = scene_tags + extra_tags[:3]
+            updated.append(shot.model_copy(update={"scene_prompt": ", ".join(merged)}))
+            aligned += 1
+        else:
+            updated.append(shot)
+
+    if aligned:
+        logger.info(
+            "Scene-prompt alignment applied | episode={} shots={}",
+            episode_num,
+            aligned,
+        )
+    return updated

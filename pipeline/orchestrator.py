@@ -71,11 +71,17 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     from llm.profile_builder import build_profiles_for_episode
     from llm.summarizer import load_arc_overview
     arc = load_arc_overview(episode_num)
-    logger.info(
-        "Building character profiles for episode | episode={} chars={}",
-        episode_num, arc.characters_in_episode,
-    )
-    build_profiles_for_episode(arc.characters_in_episode)
+    if arc.characters_in_episode:
+        logger.info(
+            "Building character profiles for episode | episode={} chars={}",
+            episode_num, arc.characters_in_episode,
+        )
+        build_profiles_for_episode(arc.characters_in_episode)
+    else:
+        logger.warning(
+            "No characters detected in arc; skipping profile build | episode={}",
+            episode_num,
+        )
 
     logger.info("Writing script | episode={}", episode_num)
     write_episode_script(episode_num)

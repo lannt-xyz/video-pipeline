@@ -307,3 +307,32 @@ class TestThumbnailPrompt:
         assert "daoist figure" in out
         assert "bright cinematic lighting" in out
         assert "high key lighting" in out
+
+
+class TestLLMPhaseOrchestrator:
+    def test_run_llm_skips_profile_build_when_arc_has_no_characters(self):
+        from pipeline.orchestrator import run_llm
+        from models.schemas import ArcOverview
+
+        db = MagicMock()
+        arc = ArcOverview(
+            episode_num=1,
+            arc_summary="Arc",
+            key_events=["event1"],
+            characters_in_episode=[],
+        )
+
+        with (
+            patch("pipeline.orchestrator._episode_chapter_range", return_value=(1, 2)),
+            patch("pipeline.orchestrator.vram_manager.unload_comfyui"),
+            patch("pipeline.orchestrator.vram_manager.health_check_ollama"),
+            patch("llm.summarizer.summarize_episode"),
+            patch("llm.summarizer.load_arc_overview", return_value=arc),
+            patch("llm.profile_builder.build_profiles_for_episode") as mock_build_profiles,
+            patch("llm.scriptwriter.write_episode_script"),
+        ):
+            run_llm(episode_num=1, db=db, dry_run=False)
+
+        mock_build_profiles.assert_not_called()
+        db.set_episode_status.assert_any_call(1, "SUMMARIZED")
+        db.set_episode_status.assert_any_call(1, "SCRIPTED")

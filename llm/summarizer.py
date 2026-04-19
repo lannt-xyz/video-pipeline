@@ -165,6 +165,39 @@ def _normalize_characters_in_episode(raw_names: List[str]) -> List[str]:
     return normalized
 
 
+def _infer_characters_from_texts(texts: List[str], max_count: int = 12) -> List[str]:
+    """Infer canonical character names from free text using wiki alias lookup."""
+    _id_to_name, alias_to_name = _load_character_lookup()
+    if not alias_to_name:
+        return []
+
+    corpus = "\n".join(t for t in texts if t).lower()
+    if not corpus:
+        return []
+
+    found: List[str] = []
+    seen: set[str] = set()
+
+    # Prefer longer aliases first to reduce accidental short-token matches.
+    for alias in sorted(alias_to_name.keys(), key=len, reverse=True):
+        alias_norm = alias.strip().lower()
+        if len(alias_norm) < 4:
+            continue
+        if not re.search(rf"(?<!\\w){re.escape(alias_norm)}(?!\\w)", corpus):
+            continue
+
+        canonical = alias_to_name[alias]
+        key = canonical.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(canonical)
+        if len(found) >= max_count:
+            break
+
+    return found
+
+
 def _is_chunk_cache_fresh(chunk_obj: dict) -> bool:
     """Return True when cached chunk summary matches current prompt version."""
     return chunk_obj.get("summary_version") == _SUMMARY_PROMPT_VERSION
@@ -190,6 +223,49 @@ def _summarize_chunk(chapters_text: str, chunk_index: int, episode_num: int) -> 
     )
 
 
+def _coerce_str_list(value: object) -> List[str]:
+    if isinstance(value, list):
+        out: List[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                out.append(text)
+        return out
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        # Accept simple single-string fallback from model output.
+        return [text]
+
+    return []
+
+
+def _fallback_key_events_from_chunks(chunk_summaries: List[str]) -> List[str]:
+    events: List[str] = []
+    for summary in chunk_summaries:
+        for raw_line in summary.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            clean = re.sub(r"^(?:[-*\d\.)\s]+)", "", line).strip()
+            if len(clean) < 20:
+                continue
+            events.append(clean)
+            if len(events) >= 10:
+                return events
+
+    if events:
+        return events
+
+    merged = " ".join(s.strip() for s in chunk_summaries if s.strip())
+    if not merged:
+        return ["Tình tiết diễn biến theo thứ tự thời gian trong chương."]
+    return [merged[:240]]
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
 def _synthesize_arc(chunk_summaries: List[str], episode_num: int) -> ArcOverview:
     # Cap each chunk summary to avoid exceeding context window
@@ -202,13 +278,37 @@ def _synthesize_arc(chunk_summaries: List[str], episode_num: int) -> ArcOverview
     raw = ollama_client.generate_json(
         prompt=prompt, system=_ARC_SYSTEM, temperature=0.3
     )
-    normalized_characters = _normalize_characters_in_episode(
-        raw.get("characters_in_episode", [])
-    )
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"Arc JSON must be an object, got {type(raw).__name__}")
+
+    arc_summary = str(raw.get("arc_summary", "") or "").strip()
+    if not arc_summary:
+        arc_summary = " ".join(s.strip() for s in chunk_summaries if s.strip())[:600]
+
+    key_events = _coerce_str_list(raw.get("key_events"))
+    if not key_events:
+        logger.warning(
+            "Arc JSON missing key_events; deriving fallback from chunk summaries | episode={}",
+            episode_num,
+        )
+        key_events = _fallback_key_events_from_chunks(chunk_summaries)
+
+    raw_characters = _coerce_str_list(raw.get("characters_in_episode"))
+    normalized_characters = _normalize_characters_in_episode(raw_characters)
+    if not normalized_characters:
+        normalized_characters = _infer_characters_from_texts(key_events + chunk_summaries)
+        if normalized_characters:
+            logger.warning(
+                "Arc JSON missing characters_in_episode; inferred {} character(s) from text | episode={}",
+                len(normalized_characters),
+                episode_num,
+            )
+
     return ArcOverview(
         episode_num=episode_num,
-        arc_summary=raw["arc_summary"],
-        key_events=raw["key_events"],
+        arc_summary=arc_summary,
+        key_events=key_events,
         characters_in_episode=normalized_characters,
     )
 

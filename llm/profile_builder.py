@@ -184,7 +184,7 @@ def _load_extraction_coverage(con: sqlite3.Connection) -> Optional[str]:
         """
         SELECT MIN(chapter_start) AS ch_min, MAX(chapter_end) AS ch_max,
                COUNT(*) AS total,
-               SUM(CASE WHEN status='DONE' THEN 1 ELSE 0 END) AS done,
+               SUM(CASE WHEN status IN ('DONE','MERGED') THEN 1 ELSE 0 END) AS done,
                MAX(extraction_version) AS max_ver
         FROM wiki_batches
         """
@@ -197,6 +197,22 @@ def _load_extraction_coverage(con: sqlite3.Connection) -> Optional[str]:
         f"{row['done']}/{row['total']} batches | "
         f"v{row['max_ver']}"
     )
+
+
+def _load_supplemental_snapshots(character_id: str, con: sqlite3.Connection, limit: int = 5) -> list[dict]:
+    """Load top snapshots by visual_importance to supplement sparse visual_anchor."""
+    cur = con.execute(
+        """
+        SELECT physical_description, outfit, weapon, vfx_vibes, level, visual_importance, chapter_start
+        FROM wiki_snapshots
+        WHERE character_id = ? AND is_active = 1
+          AND (outfit IS NOT NULL OR weapon IS NOT NULL)
+        ORDER BY visual_importance DESC, chapter_start ASC
+        LIMIT ?
+        """,
+        (character_id, limit),
+    )
+    return [dict(r) for r in cur.fetchall()]
 
 
 # ---------------------------------------------------------------------------
@@ -219,14 +235,27 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
     personality: Optional[str] = char.get("personality")
     traits: list[str] = char.get("traits_json") or []
 
-    # Fallback to best snapshot when wiki_characters has no visual data
+    # Load best snapshot: use as fallback when visual_anchor is absent,
+    # or as supplemental visual detail when visual_anchor is too short.
+    _VA_WEAK_THRESHOLD = 80  # chars — below this the anchor is treated as insufficient
     snapshot: Optional[dict] = None
+    va_is_weak = not visual_anchor or len((visual_anchor or "").strip()) < _VA_WEAK_THRESHOLD
+
     if not visual_anchor and not personality and not traits:
+        # No data at all — need snapshot or skip
         snapshot = _load_best_snapshot(character_id, con)
         if snapshot is None:
             logger.debug("Skipping {} — no visual data", character_id)
             return None
         logger.debug("Using snapshot fallback for {} (ch.{})", character_id, snapshot["chapter_start"])
+    elif va_is_weak:
+        # visual_anchor exists but is too vague — load best snapshot for supplemental detail
+        snapshot = _load_best_snapshot(character_id, con)
+        if snapshot:
+            logger.debug(
+                "visual_anchor weak ({} chars); loading snapshot supplement for {} (ch.{})",
+                len((visual_anchor or "").strip()), character_id, snapshot["chapter_start"],
+            )
 
     lines: list[str] = []
 
@@ -261,7 +290,38 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
 
     if visual_anchor:
         lines.append(f"**Visual Anchor**: {visual_anchor}")
-    elif snapshot:
+
+    # Always include snapshot supplement when visual_anchor is weak
+    supplemental = []
+    if va_is_weak and snapshot:
+        supplemental = _load_supplemental_snapshots(character_id, con, limit=5)
+
+    if supplemental:
+        lines.append("")
+        lines.append("## Ngoại hình từ snapshot (bổ sung)")
+        seen_outfits: set[str] = set()
+        seen_weapons: set[str] = set()
+        for snap in supplemental:
+            outfit = (snap.get("outfit") or "").strip()
+            weapon = (snap.get("weapon") or "").strip()
+            level = (snap.get("level") or "").strip()
+            vfx = (snap.get("vfx_vibes") or "").strip()
+            ch = snap.get("chapter_start", "?")
+            parts: list[str] = [f"ch.{ch}"]
+            if outfit and outfit not in seen_outfits:
+                parts.append(f"Trang phục: {outfit}")
+                seen_outfits.add(outfit)
+            if weapon and weapon not in seen_weapons:
+                parts.append(f"Vũ khí: {weapon}")
+                seen_weapons.add(weapon)
+            if level:
+                parts.append(f"Cảnh giới: {level}")
+            if vfx:
+                parts.append(f"VFX: {vfx}")
+            if len(parts) > 1:  # at least one real field beyond chapter
+                lines.append("- " + " | ".join(parts))
+
+    if not visual_anchor and snapshot:
         # Fallback: build visual anchor from snapshot fields
         snap_parts: list[str] = []
         if snapshot.get("physical_description"):

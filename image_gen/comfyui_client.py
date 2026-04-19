@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, List
 
@@ -179,7 +180,13 @@ class ComfyUIClient:
             else:
                 resolved[key] = value
         workflow = self._load_workflow(workflow_path, resolved)
-        self._save_prompt_debug(workflow, output_path)
+        self._save_prompt_debug(
+            workflow_path=workflow_path,
+            raw_replacements=replacements,
+            resolved_replacements=resolved,
+            workflow=workflow,
+            output_path=output_path,
+        )
         prompt_id = self.submit_prompt(workflow)
         result = self.poll_result(prompt_id)
 
@@ -200,22 +207,52 @@ class ComfyUIClient:
         logger.info("File downloaded | path={}", output_path)
         return output_path
 
-    def _save_prompt_debug(self, workflow: dict, output_path: Path) -> None:
-        """Persist the final workflow JSON sent to ComfyUI for debugging.
+    def _save_prompt_debug(
+        self,
+        workflow_path: str,
+        raw_replacements: dict[str, Any],
+        resolved_replacements: dict[str, Any],
+        workflow: dict,
+        output_path: Path,
+    ) -> None:
+        """Persist full prompt context for each ComfyUI call.
 
-        Uses parent folder name as prefix to avoid collisions when multiple
-        characters share the same filename (e.g. anchor.png → diep_binh_anchor.json).
+        Writes two files:
+        - latest snapshot with stable name (overwritten on rerun)
+        - unique history file with timestamp + random suffix (never overwritten)
         """
         debug_dir = Path("logs/comfyui_prompts")
         debug_dir.mkdir(parents=True, exist_ok=True)
         parent_name = output_path.parent.name
         stem = output_path.stem
         debug_name = f"{parent_name}_{stem}" if parent_name and parent_name != "." else stem
-        debug_file = debug_dir / f"{debug_name}.json"
-        debug_file.write_text(
-            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+
+        def _json_safe(value: Any) -> Any:
+            if isinstance(value, Path):
+                return str(value)
+            return value
+
+        payload = {
+            "saved_at": datetime.utcnow().isoformat() + "Z",
+            "workflow_path": workflow_path,
+            "output_path": str(output_path),
+            "raw_replacements": {k: _json_safe(v) for k, v in raw_replacements.items()},
+            "resolved_replacements": {k: _json_safe(v) for k, v in resolved_replacements.items()},
+            "final_workflow": workflow,
+        }
+
+        latest_file = debug_dir / f"{debug_name}.json"
+        latest_file.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        logger.debug("ComfyUI prompt saved | path={}", debug_file)
+
+        unique_suffix = uuid.uuid4().hex[:8]
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        history_file = debug_dir / f"{debug_name}_{ts}_{unique_suffix}.json"
+        history_file.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.debug("ComfyUI prompt saved | latest={} history={}", latest_file, history_file)
 
     def _load_workflow(self, workflow_path: str, replacements: dict) -> dict:
         """Load workflow JSON and replace __KEY__ placeholders.
