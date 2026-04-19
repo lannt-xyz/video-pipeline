@@ -146,6 +146,8 @@ _SCENE_DETAIL_BOOST_TAGS = (
     "clear midground subject separation",
     "deep layered background",
     "cinematic volumetric lighting",
+    "expansive environment storytelling",
+    "atmospheric depth haze",
 )
 
 _HOLDING_CONTEXT_KEYWORDS = frozenset([
@@ -508,8 +510,8 @@ def _build_shot_image_params(
         parts = [p for p in [clothing_text, dna_text] if p]
         if not parts:
             return ""
-        # Keep identity stronger than background to protect face consistency.
-        return f"({', '.join(parts)}:1.2)"
+        # Keep identity stable but avoid overpowering environment context.
+        return f"({', '.join(parts)}:1.05)"
 
     detailed_scene = _enhance_scene_detail_tags(prompt_text)
     artifact_detail_tags = _build_artifact_prompt_tags(
@@ -551,14 +553,14 @@ def _build_shot_image_params(
         # Inject clothing tags with weight 1.2 to lock outfit matching anchor
         clothing_text = _extract_clothing_tags(char_obj.description) if char_obj else ""
         # Identity-first for single-character shots to avoid face blur/deformation.
-        # Scene remains present with lower weight to preserve composition context.
-        weighted_scene = f"({detailed_scene}:0.9)" if detailed_scene else ""
+        # Put scene context early and with stronger weight so landscape persists.
+        weighted_scene = f"({detailed_scene}:1.2)" if detailed_scene else ""
         parts = [
-            p for p in [gender_tag, "solo", clothing_text, dna_text, artifact_detail_tags, weighted_scene]
+            p for p in [gender_tag, "solo", weighted_scene, artifact_detail_tags, clothing_text, dna_text]
             if p
         ]
         scene_prompt = ", ".join(parts)
-        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=14)
+        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=16)
         workflow = "image_gen/workflows/txt2img_ipadapter.json"
         replacements = {
             "SCENE_PROMPT": scene_prompt,
