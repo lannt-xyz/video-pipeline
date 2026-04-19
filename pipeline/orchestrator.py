@@ -185,6 +185,27 @@ def _enhance_scene_detail_tags(prompt_text: str) -> str:
     return ", ".join([p for p in [base, *extra] if p])
 
 
+def _compact_prompt_tags(tag_text: str, max_tags: int = 12) -> str:
+    """Compact comma-separated tags to avoid prompt dilution.
+
+    Keeps order, removes duplicates, and clips length to max_tags.
+    """
+    raw_tags = [t.strip() for t in tag_text.split(",") if t.strip()]
+    compacted: list[str] = []
+    seen: set[str] = set()
+
+    for tag in raw_tags:
+        key = tag.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        compacted.append(tag)
+        if len(compacted) >= max_tags:
+            break
+
+    return ", ".join(compacted)
+
+
 def _prompt_mentions_holding_context(prompt_text: str) -> bool:
     """Return True when prompt implies a character is holding/using a weapon/artifact."""
     lower = prompt_text.lower()
@@ -379,6 +400,41 @@ _NEGATIVE_BASE = (
     "worst quality, low quality, blurry, jpeg artifacts"
 )
 
+_THUMBNAIL_LIGHTING_TAGS = (
+    "bright cinematic lighting",
+    "high key lighting",
+    "soft warm rim light",
+    "vivid contrast",
+    "clear subject face",
+)
+
+_THUMBNAIL_DARK_FILTER_KEYWORDS = frozenset([
+    "dark", "dim", "night", "moonlight", "low light", "shadowy", "gloom",
+])
+
+_THUMBNAIL_NEGATIVE = (
+    "lowres, bad quality, blurry, underexposed, low key lighting, too dark, "
+    "heavy shadows, murky colors"
+)
+
+
+def _build_thumbnail_scene_prompt(scene_prompt: str) -> str:
+    """Build a brighter thumbnail prompt from shot scene tags.
+
+    Removes obviously dark lighting tags and appends high-visibility lighting tags
+    so thumbnails stay readable on mobile feeds.
+    """
+    tags = [t.strip() for t in scene_prompt.split(",") if t.strip()]
+    filtered = [
+        t for t in tags
+        if not any(k in t.lower() for k in _THUMBNAIL_DARK_FILTER_KEYWORDS)
+    ]
+    base = ", ".join(filtered)
+    extras = ", ".join(_THUMBNAIL_LIGHTING_TAGS)
+    return ", ".join(
+        [p for p in [base, "wide cinematic shot", extras] if p]
+    )
+
 
 def _generate_scene_fallback(
     comfyui_client: "ComfyUIClient",
@@ -452,8 +508,8 @@ def _build_shot_image_params(
         parts = [p for p in [clothing_text, dna_text] if p]
         if not parts:
             return ""
-        # Keep identity hints lightweight so scene composition still dominates.
-        return f"({', '.join(parts)}:0.9)"
+        # Keep identity stronger than background to protect face consistency.
+        return f"({', '.join(parts)}:1.2)"
 
     detailed_scene = _enhance_scene_detail_tags(prompt_text)
     artifact_detail_tags = _build_artifact_prompt_tags(
@@ -474,6 +530,7 @@ def _build_shot_image_params(
         scene_prompt = ", ".join(
             [p for p in [count_tag, detailed_scene, artifact_detail_tags, *identity_hints] if p]
         )
+        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=16)
         workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
         replacements = {
             # Dual-char: IPAdapter anchors carry both visual identities;
@@ -493,14 +550,15 @@ def _build_shot_image_params(
         dna_text = _extract_dna_tags(char_obj.description) if char_obj else ""
         # Inject clothing tags with weight 1.2 to lock outfit matching anchor
         clothing_text = _extract_clothing_tags(char_obj.description) if char_obj else ""
-        # Scene-first ordering: background/environment gets higher priority than character tags.
-        # Wrapping scene in (…:1.2) prevents IPAdapter from crowding out the background.
-        weighted_scene = f"({detailed_scene}:1.2)" if detailed_scene else ""
+        # Identity-first for single-character shots to avoid face blur/deformation.
+        # Scene remains present with lower weight to preserve composition context.
+        weighted_scene = f"({detailed_scene}:0.9)" if detailed_scene else ""
         parts = [
-            p for p in [weighted_scene, artifact_detail_tags, gender_tag, "solo", clothing_text, dna_text]
+            p for p in [gender_tag, "solo", clothing_text, dna_text, artifact_detail_tags, weighted_scene]
             if p
         ]
         scene_prompt = ", ".join(parts)
+        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=14)
         workflow = "image_gen/workflows/txt2img_ipadapter.json"
         replacements = {
             "SCENE_PROMPT": scene_prompt,
@@ -518,8 +576,11 @@ def _build_shot_image_params(
     else:
         workflow = "image_gen/workflows/txt2img_scene.json"
         replacements = {
-            "SCENE_PROMPT": ", ".join(
+            "SCENE_PROMPT": _compact_prompt_tags(
+                ", ".join(
                 [p for p in [detailed_scene, artifact_detail_tags] if p]
+                ),
+                max_tags=14,
             ),
             "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE,
             "WIDTH": settings.image_width,
@@ -648,11 +709,13 @@ def _generate_thumbnail(episode_num: int, shot, shot_idx: int) -> None:
     if thumbnail_path.exists():
         return
 
+    thumbnail_scene_prompt = _build_thumbnail_scene_prompt(shot.scene_prompt)
+
     comfyui_client.generate_image(
         workflow_path="image_gen/workflows/thumbnail.json",
         replacements={
-            "SCENE_PROMPT": f"{shot.scene_prompt}, wide cinematic shot",
-            "NEGATIVE_PROMPT": "lowres, bad quality, blurry",
+            "SCENE_PROMPT": thumbnail_scene_prompt,
+            "NEGATIVE_PROMPT": _THUMBNAIL_NEGATIVE,
             "WIDTH": settings.thumbnail_width,
             "HEIGHT": settings.thumbnail_height,
             "SEED": episode_num * 1000 + shot_idx,

@@ -267,3 +267,43 @@ class TestImagePromptEnrichment:
             hints,
         )
         assert "ornate daoist sword" in tags
+
+    def test_compact_prompt_tags_removes_duplicates_and_limits_count(self):
+        from pipeline.orchestrator import _compact_prompt_tags
+
+        text = "a, b, c, a, d, e, f"
+        compacted = _compact_prompt_tags(text, max_tags=4)
+        assert compacted == "a, b, c, d"
+
+    def test_single_character_prompt_is_identity_first(self):
+        from pipeline.orchestrator import _build_shot_image_params
+        from models.schemas import Character
+
+        char = Character(
+            name="Diệp Thiếu Dương",
+            gender="male",
+            description="1boy, solo, short black hair, sharp eyes, dark jacket",
+        )
+        _workflow, replacements = _build_shot_image_params(
+            prompt_text="ruined shrine interior, daoist figure chanting",
+            char_anchor_pairs=[(char, ["/tmp/a.png"])],
+            seed=42,
+            artifact_hints_by_name=None,
+        )
+
+        prompt = replacements["SCENE_PROMPT"]
+        assert prompt.startswith("1boy, solo")
+
+
+class TestThumbnailPrompt:
+    def test_thumbnail_prompt_filters_dark_tags_and_adds_bright_tags(self):
+        from pipeline.orchestrator import _build_thumbnail_scene_prompt
+
+        src = "dark ruined shrine, moonlight fog, daoist figure, ritual altar"
+        out = _build_thumbnail_scene_prompt(src)
+
+        assert "dark ruined shrine" not in out
+        assert "moonlight fog" not in out
+        assert "daoist figure" in out
+        assert "bright cinematic lighting" in out
+        assert "high key lighting" in out

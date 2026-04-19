@@ -45,7 +45,7 @@
   "3": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, masterpiece, best quality, cinematic, wide shot",
+      "text": "__SCENE_PROMPT__, masterpiece, best quality, cinematic, wide shot, bright key light, vivid color grading",
       "clip": [
         "2",
         1
@@ -55,7 +55,7 @@
   "4": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__NEGATIVE_PROMPT__, nsfw",
+      "text": "__NEGATIVE_PROMPT__, nsfw, underexposed, dark scene, murky shadows",
       "clip": [
         "2",
         1
