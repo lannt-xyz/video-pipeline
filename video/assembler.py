@@ -96,10 +96,10 @@ def _create_multiframe_clip(
     output_path: Path,
     duration: float = 6.0,
 ) -> Path:
-    """Render a shot clip from 2 frames with crossfade + varied Ken Burns.
+    """Render a shot clip from N frames with crossfade + varied Ken Burns.
 
-    Each frame gets roughly half the duration with a crossfade overlap.
-    Uses FFmpeg filter_complex: zoompan(frame1) → zoompan(frame2) → xfade → audio merge.
+    Each frame gets an equal share of duration with xfade overlap between neighbors.
+    Uses FFmpeg filter_complex: zoompan(frame_i) streams chained by xfade.
     """
     if len(frame_images) < 2 or len(frames) < 2:
         # Single frame — delegate to simple zoompan
@@ -119,36 +119,39 @@ def _create_multiframe_clip(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fps = settings.fps
+    n_frames = min(len(frame_images), len(frames))
     xfade_dur = settings.crossfade_duration
-    # Each frame displays for (duration + xfade_dur) / 2, with xfade overlap
-    frame_dur = (duration + xfade_dur) / 2.0
+    # Total duration = n*frame_dur - (n-1)*xfade_dur  =>  frame_dur formula below.
+    frame_dur = (duration + (n_frames - 1) * xfade_dur) / n_frames
     frame_video_dur = frame_dur + 1.0  # extra buffer for zoompan
     total_frames_per = int(frame_video_dur * fps)
 
-    zp0 = _zoompan_params(frames[0].motion, total_frames_per)
-    zp1 = _zoompan_params(frames[1].motion, total_frames_per)
-
-    # Build filter_complex manually for proper xfade between two zoompan streams
-    xfade_offset = max(0.1, frame_dur - xfade_dur)
-
-    in0 = ffmpeg.input(str(frame_images[0]), loop=1, t=frame_video_dur, framerate=fps)
-    in1 = ffmpeg.input(str(frame_images[1]), loop=1, t=frame_video_dur, framerate=fps)
     audio_in = ffmpeg.input(str(audio_path))
 
-    v0 = (
-        in0.filter("zoompan", **zp0)
-        .filter("setpts", "PTS-STARTPTS")
-        .filter("trim", duration=frame_dur)
-        .filter("setpts", "PTS-STARTPTS")
-    )
-    v1 = (
-        in1.filter("zoompan", **zp1)
-        .filter("setpts", "PTS-STARTPTS")
-        .filter("trim", duration=frame_dur)
-        .filter("setpts", "PTS-STARTPTS")
-    )
+    prepared_streams = []
+    for img, frame in zip(frame_images[:n_frames], frames[:n_frames]):
+        zp = _zoompan_params(frame.motion, total_frames_per)
+        stream = (
+            ffmpeg.input(str(img), loop=1, t=frame_video_dur, framerate=fps)
+            .filter("zoompan", **zp)
+            .filter("setpts", "PTS-STARTPTS")
+            .filter("trim", duration=frame_dur)
+            .filter("setpts", "PTS-STARTPTS")
+        )
+        prepared_streams.append(stream)
 
-    merged = ffmpeg.filter([v0, v1], "xfade", transition="fade", duration=xfade_dur, offset=xfade_offset)
+    merged = prepared_streams[0]
+    current_total = frame_dur
+    for i in range(1, n_frames):
+        xfade_offset = max(0.1, current_total - xfade_dur)
+        merged = ffmpeg.filter(
+            [merged, prepared_streams[i]],
+            "xfade",
+            transition="fade",
+            duration=xfade_dur,
+            offset=xfade_offset,
+        )
+        current_total += frame_dur - xfade_dur
 
     try:
         ffmpeg.output(
@@ -290,7 +293,7 @@ def assemble_shot_clips(
             if len(frame_imgs) >= 2 and len(shot.frames) >= 2:
                 future = executor.submit(
                     _create_multiframe_clip,
-                    frame_imgs[:2], shot.frames[:2], aud, out, shot.duration_sec,
+                    frame_imgs, shot.frames, aud, out, shot.duration_sec,
                 )
             else:
                 motion = shot.frames[0].motion if shot.frames else MotionDirection.ZOOM_IN

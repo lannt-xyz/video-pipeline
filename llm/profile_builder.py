@@ -20,7 +20,7 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config.settings import settings
-from llm.character_extractor import _sanitize_description
+from llm.character_extractor import _sanitize_description, _slugify
 from llm.client import ollama_client
 from models.schemas import Character
 
@@ -391,6 +391,16 @@ def _resolve_wiki_db(db_path: str) -> Optional[str]:
     return None
 
 
+def _resolve_character_dir(chars_dir: Path, char_id: str, char_name: str) -> Path:
+    """Return canonical character folder path (slug from display name).
+
+    No on-disk migration is performed; old folders can be cleaned manually.
+    """
+    canonical_dir = chars_dir / _slugify(char_name)
+    canonical_dir.mkdir(parents=True, exist_ok=True)
+    return canonical_dir
+
+
 # ---------------------------------------------------------------------------
 # Per-episode profile builder (preferred: only builds what the episode needs)
 # ---------------------------------------------------------------------------
@@ -461,8 +471,16 @@ def build_profiles_for_episode(
         )
 
         for char_id in target_ids:
-            char_dir = chars_dir / char_id
-            char_dir.mkdir(parents=True, exist_ok=True)
+            canonical_name_filter = (
+                " AND is_delete = 0" if _wiki_characters_has_is_delete(con) else ""
+            )
+            wiki_row = con.execute(
+                f"SELECT name FROM wiki_characters WHERE character_id=?{canonical_name_filter}",
+                (char_id,),
+            ).fetchone()
+            char_name = wiki_row["name"] if wiki_row else char_id
+
+            char_dir = _resolve_character_dir(chars_dir, char_id, char_name)
             json_path = char_dir / "profile.json"
             md_path = char_dir / "profile.md"
             raw_path = char_dir / "profile.raw.json"
@@ -485,16 +503,6 @@ def build_profiles_for_episode(
                 raw_path.write_text(
                     json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
-
-                # Look up canonical name from wiki row
-                canonical_name_filter = (
-                    " AND is_delete = 0" if _wiki_characters_has_is_delete(con) else ""
-                )
-                wiki_row = con.execute(
-                    f"SELECT name FROM wiki_characters WHERE character_id=?{canonical_name_filter}",
-                    (char_id,),
-                ).fetchone()
-                char_name = wiki_row["name"] if wiki_row else char_id
 
                 raw.setdefault("name", char_name)
                 raw.setdefault("alias", [])
@@ -581,8 +589,7 @@ def build_all_profiles(force: bool = False) -> list[Character]:
         for row in all_chars:
             char_id: str = row["character_id"]
             char_name: str = row["name"]
-            char_dir = chars_dir / char_id
-            char_dir.mkdir(parents=True, exist_ok=True)
+            char_dir = _resolve_character_dir(chars_dir, char_id, char_name)
             json_path = char_dir / "profile.json"
             md_path = char_dir / "profile.md"
             raw_path = char_dir / "profile.raw.json"

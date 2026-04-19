@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     tts_tail_padding_sec: float = 0.5
 
     # Multi-frame & motion
-    frames_per_shot: int = 2
+    frames_per_shot: int = 4
     crossfade_duration: float = 0.5
     shot_transition_duration: float = 0.3
     shot_transition_type: str = "dissolve"

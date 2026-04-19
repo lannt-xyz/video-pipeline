@@ -3,7 +3,7 @@ from typing import List
 from config.settings import settings
 from models.schemas import CameraFlow, FrameScript, MotionDirection, ShotScript
 
-# Minimum shot duration (seconds) to warrant 2 frames with crossfade.
+# Minimum shot duration (seconds) to warrant multi-frame crossfade.
 # Hook shots (≤3s) are too short — crossfade would eat most of the clip.
 _MIN_DURATION_FOR_MULTI_FRAME = 4.0
 
@@ -11,23 +11,31 @@ _MIN_DURATION_FOR_MULTI_FRAME = 4.0
 # Each entry: (camera_tag_prefix, motion_direction)
 _FLOW_FRAMES = {
     CameraFlow.WIDE_TO_CLOSE: [
-        # Frame 0: wide — establish environment; Frame 1: medium — focus on character
+        # Establish environment → medium subject → tighter story beat.
         ("wide establishing shot, ", MotionDirection.ZOOM_IN),
+        ("wide shot, ", MotionDirection.ZOOM_IN),
         ("medium shot, ", MotionDirection.ZOOM_IN),
+        ("medium close-up, ", MotionDirection.ZOOM_IN),
     ],
     CameraFlow.CLOSE_TO_WIDE: [
-        # Frame 0: medium close-up — enough face + near background visible
+        # Reveal pattern: detail first, then pull out to space context.
         ("medium close-up, ", MotionDirection.ZOOM_OUT),
+        ("medium shot, ", MotionDirection.ZOOM_OUT),
+        ("wide shot, ", MotionDirection.ZOOM_OUT),
         ("wide shot, ", MotionDirection.ZOOM_OUT),
     ],
     CameraFlow.PAN_ACROSS: [
         ("left side wide shot, ", MotionDirection.PAN_RIGHT),
+        ("left-center wide shot, ", MotionDirection.PAN_RIGHT),
+        ("right-center wide shot, ", MotionDirection.PAN_LEFT),
         ("right side wide shot, ", MotionDirection.PAN_LEFT),
     ],
     CameraFlow.DETAIL_REVEAL: [
         # Was "extreme close-up detail" — caused background to disappear entirely.
         # "close-up detail" still focuses on object but retains surrounding context.
         ("close-up detail, ", MotionDirection.ZOOM_OUT),
+        ("medium close-up, ", MotionDirection.ZOOM_OUT),
+        ("medium shot, ", MotionDirection.ZOOM_OUT),
         ("medium wide shot, ", MotionDirection.ZOOM_OUT),
     ],
     CameraFlow.STATIC_CLOSE: [
@@ -43,7 +51,7 @@ def decompose_shot(shot: ShotScript) -> List[FrameScript]:
     """Generate frame prompts from a shot's scene_prompt and camera_flow.
 
     Returns 1 frame for short shots (<4s) or static flows,
-    2 frames for longer shots with dynamic camera flows.
+    up to settings.frames_per_shot frames for longer shots with dynamic camera flows.
     Deterministic — no LLM calls.
     """
     flow_configs = _FLOW_FRAMES.get(shot.camera_flow, _FLOW_FRAMES[CameraFlow.WIDE_TO_CLOSE])
@@ -59,7 +67,7 @@ def decompose_shot(shot: ShotScript) -> List[FrameScript]:
             )
         ]
 
-    # Multi-frame: cap at settings.frames_per_shot (default 2)
+    # Multi-frame: cap at settings.frames_per_shot (default 4)
     max_frames = min(settings.frames_per_shot, len(flow_configs))
     frames = []
     for tag, motion in flow_configs[:max_frames]:

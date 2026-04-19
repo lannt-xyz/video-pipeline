@@ -40,7 +40,7 @@ tts_lead_in_sec: 0.2
 tts_tail_padding_sec: 0.5
 
 # Multi-frame & motion settings
-frames_per_shot: 2              # images per shot (1 = legacy, 2 = multi-frame)
+frames_per_shot: 4              # images per shot (1 = legacy, 4 = richer motion)
 crossfade_duration: 0.5         # seconds, crossfade between frames within a shot
 shot_transition_duration: 0.3   # seconds, transition between shots
 shot_transition_type: "dissolve" # FFmpeg xfade transition type
