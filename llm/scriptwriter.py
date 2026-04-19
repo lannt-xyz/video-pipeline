@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import List
 
@@ -174,6 +175,7 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
 
 
 _MAX_SHOTS_PER_EPISODE = 8  # shots that fit in one video; excess flows to next episode
+_ID_LIKE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
 
 
 def _load_carryover(episode_num: int) -> List[ShotScript]:
@@ -227,6 +229,9 @@ def _build_characters_ref(arc_char_names: List[str]) -> str:
     for arc_name in arc_char_names:
         char = lookup.get(arc_name)
         if char is None:
+            if _ID_LIKE_RE.match(arc_name.lower()):
+                logger.debug("Skipping unresolved id-like character token | token={}", arc_name)
+                continue
             parts.append(arc_name)
         elif char.name not in seen_canonical:
             seen_canonical.add(char.name)

@@ -23,6 +23,11 @@ def _slugify(name: str) -> str:
 
 _ANCHOR_WORKFLOW = "image_gen/workflows/anchor_gen.json"
 
+_ANCHOR_ETHNICITY_POSITIVE = (
+    "east asian facial features, chinese facial features, han chinese aesthetics, "
+    "asian eyes, black hair"
+)
+
 _NEGATIVE = (
     # Hard NSFW block
     "nsfw, nudity, naked, nude, nipples, pussy, penis, genitals, "
@@ -35,8 +40,20 @@ _NEGATIVE = (
     # Quality anti-tags
     "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, "
     "fewer digits, cropped, worst quality, low quality, normal quality, "
-    "jpeg artifacts, signature, watermark, username, blurry, score_1, score_2"
+    "jpeg artifacts, signature, watermark, username, blurry, score_1, score_2, "
+    # Reduce western-looking anchors
+    "western facial features, caucasian, european face, deep eye sockets, high nose bridge"
 )
+
+
+def _build_anchor_scene_prompt(character: Character, angle_tags: str) -> str:
+    """Build a stable anchor prompt with explicit East Asian facial bias."""
+    return (
+        f"{_ANCHOR_ETHNICITY_POSITIVE}, {character.description}, "
+        f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
+        "anime style, manhua art style, plain background, "
+        "detailed face, high quality, masterpiece, best quality, ultra detailed"
+    )
 
 
 def generate_character_anchors(force: bool = False) -> None:
@@ -85,12 +102,7 @@ def _generate_single_anchor(character: Character, force: bool = False) -> Path:
         if view_path.exists() and not force:
             continue
 
-        scene_prompt = (
-            f"{character.description}, "
-            f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
-            "anime style, manhua art style, plain background, "
-            "detailed face, high quality, masterpiece, best quality, ultra detailed"
-        )
+        scene_prompt = _build_anchor_scene_prompt(character, angle_tags)
 
         comfyui_client.generate_image(
             workflow_path=_ANCHOR_WORKFLOW,
@@ -109,7 +121,7 @@ def _generate_single_anchor(character: Character, force: bool = False) -> Path:
 
     # Update character JSON with anchor_path
     char_json = (
-        Path(settings.data_dir) / "characters" / f"{char_slug}.json"
+        Path(settings.data_dir) / "characters" / char_slug / "profile.json"
     )
     if char_json.exists():
         data = json.loads(char_json.read_text(encoding="utf-8"))

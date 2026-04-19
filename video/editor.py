@@ -22,6 +22,34 @@ def sanitize_for_srt(text: str) -> str:
     return text.strip()
 
 
+def _resolve_subtitle_padding() -> tuple[float, float]:
+    """Return (lead_in_sec, tail_pad_sec) used by subtitle timing.
+
+    Tail padding is only applied when BGM exists, matching audio.mixer behavior.
+    """
+    lead = max(0.0, settings.tts_lead_in_sec)
+    tail = 0.0
+    try:
+        from audio.mixer import find_bgm
+
+        if find_bgm() is not None:
+            tail = max(0.0, settings.tts_tail_padding_sec)
+    except Exception as exc:
+        logger.debug("Could not resolve BGM for subtitle padding | err={}", exc)
+    return lead, tail
+
+
+def _speech_window(shot_start: float, shot_duration: float, lead: float, tail: float) -> tuple[float, float]:
+    """Compute spoken interval within one shot timeline.
+
+    Subtitles should follow narration speech, not silence padding added to audio.
+    """
+    shot_end = shot_start + max(0.0, shot_duration)
+    speech_start = min(shot_end, shot_start + max(0.0, lead))
+    speech_end = min(shot_end, max(speech_start + 0.1, shot_end - max(0.0, tail)))
+    return speech_start, speech_end
+
+
 def generate_srt(shots: List[ShotScript], output_path: Path, intro_duration: float = 2.0) -> None:
     """Write SRT subtitle file from shot narrations.
     Offset accounts for intro clip duration and shot-to-shot transition overlap.
@@ -30,10 +58,14 @@ def generate_srt(shots: List[ShotScript], output_path: Path, intro_duration: flo
     lines: List[str] = []
     current_time = intro_duration  # offset by intro
     transition_dur = settings.shot_transition_duration
+    lead_in_sec, tail_pad_sec = _resolve_subtitle_padding()
 
     for idx, shot in enumerate(shots, start=1):
-        start = current_time
-        end = current_time + shot.duration_sec
+        shot_start = current_time
+        shot_end = current_time + shot.duration_sec
+        start, end = _speech_window(
+            shot_start, shot.duration_sec, lead_in_sec, tail_pad_sec
+        )
         safe_text = sanitize_for_srt(shot.narration_text)
 
         lines.append(str(idx))
@@ -42,7 +74,7 @@ def generate_srt(shots: List[ShotScript], output_path: Path, intro_duration: flo
         lines.append("")
 
         # Each shot overlaps with the next by transition_dur (except last)
-        current_time = end - transition_dur
+        current_time = shot_end - transition_dur
 
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -149,12 +181,19 @@ def generate_ass(shots: List[ShotScript], output_path: Path, intro_duration: flo
 
     dialogue_lines: List[str] = []
     current_time = intro_duration
+    lead_in_sec, tail_pad_sec = _resolve_subtitle_padding()
 
     for shot_idx, shot in enumerate(shots):
         safe_narration = sanitize_for_srt(shot.narration_text)
         words = safe_narration.split()
+        shot_start = current_time
+        shot_end = current_time + shot.duration_sec
+        speech_start, speech_end = _speech_window(
+            shot_start, shot.duration_sec, lead_in_sec, tail_pad_sec
+        )
+        speech_duration = max(0.1, speech_end - speech_start)
         if not words:
-            current_time += shot.duration_sec
+            current_time = shot_end
             if shot_idx < len(shots) - 1:
                 current_time -= transition_dur
             continue
@@ -163,11 +202,16 @@ def generate_ass(shots: List[ShotScript], output_path: Path, intro_duration: flo
             words[i: i + _WORDS_PER_SEGMENT]
             for i in range(0, len(words), _WORDS_PER_SEGMENT)
         ]
-        seg_duration = shot.duration_sec / len(segments)
+        seg_duration = speech_duration / len(segments)
 
-        for seg_words in segments:
+        current_time = speech_start
+
+        for seg_i, seg_words in enumerate(segments):
             seg_start = current_time
-            seg_end = current_time + seg_duration
+            if seg_i == len(segments) - 1:
+                seg_end = speech_end
+            else:
+                seg_end = current_time + seg_duration
             word_dur_cs = max(1, int(seg_duration * 100 / len(seg_words)))
             karaoke_text = _tag_segment(seg_words, word_dur_cs)
             dialogue_lines.append(
@@ -177,6 +221,7 @@ def generate_ass(shots: List[ShotScript], output_path: Path, intro_duration: flo
             current_time = seg_end
 
         # Account for transition overlap with next shot (except last)
+        current_time = shot_end
         if shot_idx < len(shots) - 1:
             current_time -= transition_dur
 

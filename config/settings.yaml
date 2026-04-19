@@ -36,6 +36,8 @@ shot_duration_sec: 6
 # Audio
 tts_voice: "vi-VN-HoaiMyNeural"
 bgm_volume_db: -15
+tts_lead_in_sec: 0.2
+tts_tail_padding_sec: 0.5
 
 # Multi-frame & motion settings
 frames_per_shot: 2              # images per shot (1 = legacy, 2 = multi-frame)
@@ -48,7 +50,7 @@ enable_svd: false
 
 # Paths (relative to project root)
 data_dir: "data/{story_slug}"
-db_path: "data/{story_slug}/{story_slug}.db"
+db_path: "data/{story_slug}.db"
 logs_dir: "logs"
 assets_dir: "assets"
 

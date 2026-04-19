@@ -62,7 +62,6 @@ class StateDB:
                     title       TEXT,
                     url         TEXT,
                     content     TEXT,
-                    file_path   TEXT,
                     status      TEXT NOT NULL DEFAULT 'PENDING',
                     crawled_at  TIMESTAMP,
                     error_msg   TEXT
@@ -104,7 +103,6 @@ class StateDB:
         chapter_num: int,
         title: str,
         url: str,
-        file_path: str,
         status: str,
         crawled_at: Optional[datetime] = None,
         content: Optional[str] = None,
@@ -112,18 +110,17 @@ class StateDB:
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO chapters (chapter_num, title, url, content, file_path, status, crawled_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO chapters (chapter_num, title, url, content, status, crawled_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chapter_num) DO UPDATE SET
                     title=excluded.title,
                     url=excluded.url,
                     content=COALESCE(excluded.content, chapters.content),
-                    file_path=excluded.file_path,
                     status=excluded.status,
                     crawled_at=excluded.crawled_at,
                     error_msg=NULL
                 """,
-                (chapter_num, title, url, content, file_path, status, crawled_at),
+                (chapter_num, title, url, content, status, crawled_at),
             )
 
     def set_chapter_status(
@@ -154,38 +151,15 @@ class StateDB:
             return [r["chapter_num"] for r in rows]
 
     def get_chapter_content(self, chapter_num: int) -> Optional[str]:
-        """Load chapter text from DB content; fallback to chapter file path when needed."""
+        """Load chapter text from DB content column."""
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT content, file_path FROM chapters WHERE chapter_num=?",
+                "SELECT content FROM chapters WHERE chapter_num=?",
                 (chapter_num,),
             ).fetchone()
-
         if not row:
             return None
-
-        content = (row["content"] or "").strip()
-        if content:
-            return content
-
-        file_path = row["file_path"]
-        if not file_path:
-            return None
-
-        path = Path(file_path)
-        if not path.exists():
-            return None
-
-        try:
-            return path.read_text(encoding="utf-8")
-        except Exception as exc:
-            logger.warning(
-                "Failed reading chapter file | chapter={} path={} error={}",
-                chapter_num,
-                file_path,
-                exc,
-            )
-            return None
+        return (row["content"] or "").strip() or None
 
     # ── Episodes ──────────────────────────────────────────────────────────────
 

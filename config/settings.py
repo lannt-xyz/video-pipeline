@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     # Audio
     tts_voice: str = "vi-VN-HoaiMyNeural"
     bgm_volume_db: int = -15
+    tts_lead_in_sec: float = 0.2
+    tts_tail_padding_sec: float = 0.5
 
     # Multi-frame & motion
     frames_per_shot: int = 2
@@ -101,25 +103,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def resolve_story_paths(self) -> "Settings":
-        """Ensure data/db paths are always scoped by story_slug."""
+        """Pin data_dir and db_path to story_slug so swap = change config only."""
         slug = self.story_slug.strip()
         if not slug:
             raise ValueError("story_slug must not be empty")
-
-        data_tpl = self.data_dir.replace("{story_slug}", slug)
-        data_path = Path(data_tpl)
-        if data_path.name != slug:
-            data_path = data_path / slug
-        self.data_dir = str(data_path)
-
-        db_tpl = self.db_path.replace("{story_slug}", slug)
-        db_candidate = Path(db_tpl)
-        db_name = f"{slug}.db"
-        if db_candidate.name != db_name:
-            self.db_path = str(data_path / db_name)
-        else:
-            self.db_path = str(data_path / db_candidate.name)
-
+        self.data_dir = str(Path("data") / slug)
+        self.db_path = str(Path("data") / f"{slug}.db")
         return self
 
     @property

@@ -1,4 +1,6 @@
 import json
+import re
+import sqlite3
 from pathlib import Path
 from typing import List
 
@@ -10,11 +12,25 @@ from llm.client import ollama_client
 from models.schemas import ArcOverview, ChunkSummary
 from pipeline.state import StateDB
 
+_SUMMARY_PROMPT_VERSION = "scene-detail-v2"
+
 _CHUNK_SYSTEM = (
-    "You are a story analyst. Summarize the provided Vietnamese story chapters "
-    "in Vietnamese. Focus on: key events, character actions, emotional beats, "
-    "and plot developments. Write a concise summary of ~200 words. "
-    "Return plain text only, no JSON."
+        "You are a story analyst for AI video generation. Summarize the provided "
+        "Vietnamese story chapters in Vietnamese with SCENE-LEVEL detail that can be "
+        "directly used to build visual prompts. Focus on: concrete actions, who does "
+        "what, where the action happens, and notable props/artifacts/weapon usage. "
+        "Do NOT write abstract commentary.\n"
+        "\n"
+        "Output format (plain text only, no JSON):\n"
+        "- Bối cảnh chính: 2-3 câu mô tả địa điểm/thời điểm\n"
+        "- Cảnh 1..N (6-10 cảnh, theo đúng thứ tự thời gian), mỗi cảnh 2-3 câu gồm:\n"
+        "  + Nhân vật chính trong cảnh\n"
+        "  + Hành động cụ thể (động từ rõ ràng)\n"
+        "  + Đạo cụ/pháp khí/vũ khí được cầm hoặc sử dụng (nếu có)\n"
+        "  + Kết quả trực tiếp dẫn sang cảnh kế\n"
+        "- Mồi cliffhanger: 1-2 câu chưa giải quyết hoàn toàn\n"
+        "\n"
+        "Write concise but specific text (~260-380 words). Return plain text only."
 )
 
 _ARC_SYSTEM = """You are a story analyst. Given multiple chunk summaries from consecutive story chapters, create an arc overview for this episode segment.
@@ -24,12 +40,145 @@ Each item in key_events = one specific action or scene that happens, described i
 Do NOT merge scenes or write thematic statements. Do NOT reorder events.
 The FIRST key_event = what happens first in the story. The LAST key_event = what happens last.
 
+QUALITY RULES for each key_event (mandatory):
+- Mention at least 1 concrete action verb (mở, rút, lao tới, niệm chú, đập vỡ, v.v.).
+- Mention location/background context if available (miếu, mộ, nghĩa địa, nhà kho, hành lang, rừng...).
+- If a character uses/carries artifact/weapon/talisman, explicitly mention it.
+- Avoid vague phrases like "mọi chuyện căng thẳng hơn", "tình hình leo thang".
+
 Return a JSON object with EXACTLY this schema:
 {
-  "arc_summary": "string — brief narrative overview in Vietnamese, ~150 words",
-  "key_events": ["string — 7-9 chronological scene beats, each describing a specific action/scene in story order"],
+    "arc_summary": "string — narrative overview in Vietnamese, ~180-240 words, concrete and scene-oriented",
+    "key_events": ["string — 8-12 chronological scene beats, each describing a specific action/scene in story order with location and object detail when possible"],
   "characters_in_episode": ["string — list of character names who appear"]
 }"""
+
+
+# Vietnamese text averages ~2 chars/token; reserve 1000 tokens for system prompt + template
+_CHARS_PER_TOKEN = 2
+_CONTEXT_OVERHEAD_TOKENS = 1000
+_ID_LIKE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
+
+
+def _max_content_chars() -> int:
+    """Max characters of chapter content that safely fit in one LLM call."""
+    available = max(settings.llm_context_size - _CONTEXT_OVERHEAD_TOKENS, 2000)
+    return available * _CHARS_PER_TOKEN
+
+
+def _resolve_wiki_db_path() -> Path | None:
+    """Resolve DB that contains wiki_characters table."""
+    candidates = [
+        Path(settings.db_path),
+        Path("data") / f"{settings.story_slug}.db",
+    ]
+    for db_path in candidates:
+        if not db_path.exists():
+            continue
+        try:
+            con = sqlite3.connect(str(db_path))
+            exists = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='wiki_characters'"
+            ).fetchone()
+            con.close()
+        except Exception:
+            continue
+        if exists:
+            return db_path
+    return None
+
+
+def _load_character_lookup() -> tuple[dict[str, str], dict[str, str]]:
+    """Return (id_to_name, alias_or_name_to_name) lookup from wiki_characters."""
+    db_path = _resolve_wiki_db_path()
+    if db_path is None:
+        return {}, {}
+
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+        cols = {
+            row["name"] for row in con.execute("PRAGMA table_info(wiki_characters)").fetchall()
+        }
+        active_filter = " WHERE is_delete = 0" if "is_delete" in cols else ""
+        rows = con.execute(
+            f"SELECT character_id, name, aliases_json FROM wiki_characters{active_filter}"
+        ).fetchall()
+        con.close()
+    except Exception as exc:
+        logger.debug("Failed to load character lookup from DB | err={}", exc)
+        return {}, {}
+
+    id_to_name: dict[str, str] = {}
+    alias_to_name: dict[str, str] = {}
+    for row in rows:
+        char_id = str(row["character_id"] or "").strip()
+        name = str(row["name"] or "").strip()
+        if not char_id or not name:
+            continue
+
+        id_to_name[char_id.lower()] = name
+        alias_to_name[name.lower()] = name
+
+        try:
+            aliases = json.loads(row["aliases_json"] or "[]")
+        except Exception:
+            aliases = []
+        for a in aliases:
+            alias = str(a).strip()
+            if alias:
+                alias_to_name[alias.lower()] = name
+
+    return id_to_name, alias_to_name
+
+
+def _normalize_characters_in_episode(raw_names: List[str]) -> List[str]:
+    """Normalize character list to canonical Vietnamese names.
+
+    - Maps character_id/alias to canonical name via wiki_characters.
+    - Drops unresolved id-like tokens (e.g. qing_yun_zi).
+    - Preserves order and deduplicates.
+    """
+    id_to_name, alias_to_name = _load_character_lookup()
+
+    normalized: List[str] = []
+    seen: set[str] = set()
+
+    for raw in raw_names:
+        token = str(raw or "").strip()
+        if not token:
+            continue
+
+        lower = token.lower()
+        canonical = alias_to_name.get(lower) or id_to_name.get(lower)
+
+        if canonical is None and _ID_LIKE_RE.match(lower):
+            logger.debug("Dropping unresolved character id token | token={}", token)
+            continue
+
+        final_name = canonical or token
+        key = final_name.lower()
+        if key not in seen:
+            seen.add(key)
+            normalized.append(final_name)
+
+    return normalized
+
+
+def _is_chunk_cache_fresh(chunk_obj: dict) -> bool:
+    """Return True when cached chunk summary matches current prompt version."""
+    return chunk_obj.get("summary_version") == _SUMMARY_PROMPT_VERSION
+
+
+def _is_arc_cache_fresh(arc_path: Path) -> bool:
+    """Return True when cached arc summary was generated by current prompt version."""
+    if not arc_path.exists():
+        return False
+    try:
+        data = json.loads(arc_path.read_text(encoding="utf-8"))
+        return data.get("summary_version") == _SUMMARY_PROMPT_VERSION
+    except Exception:
+        return False
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
@@ -53,11 +202,14 @@ def _synthesize_arc(chunk_summaries: List[str], episode_num: int) -> ArcOverview
     raw = ollama_client.generate_json(
         prompt=prompt, system=_ARC_SYSTEM, temperature=0.3
     )
+    normalized_characters = _normalize_characters_in_episode(
+        raw.get("characters_in_episode", [])
+    )
     return ArcOverview(
         episode_num=episode_num,
         arc_summary=raw["arc_summary"],
         key_events=raw["key_events"],
-        characters_in_episode=raw["characters_in_episode"],
+        characters_in_episode=normalized_characters,
     )
 
 
@@ -65,7 +217,9 @@ def summarize_episode(
     episode_num: int, chapter_start: int, chapter_end: int
 ) -> ArcOverview:
     """Two-pass summarization for one episode.
-    Pass 1: groups of 5 chapters → chunk summaries (skips already-saved chunks).
+    Pass 1: merge chapters greedily into context-window-sized batches → chunk summaries.
+           Each batch sends as many full chapters as fit before hitting the LLM context limit.
+           Skips already-cached chunks.
     Pass 2: chunk summaries → ArcOverview (skips if arc file already exists).
     """
     # Short-circuit: if arc already exists, skip both passes entirely
@@ -74,11 +228,15 @@ def summarize_episode(
         / "summaries"
         / f"episode-{episode_num:03d}-arc.json"
     )
-    if arc_path.exists():
+    if _is_arc_cache_fresh(arc_path):
         logger.info("Arc overview cached, skipping summarization | episode={}", episode_num)
         return load_arc_overview(episode_num)
+    if arc_path.exists():
+        logger.info(
+            "Arc cache is stale (old summary version), regenerating | episode={}",
+            episode_num,
+        )
 
-    chapters_per_chunk = 5
     chapter_nums = list(range(chapter_start, chapter_end + 1))
     chunk_summaries: List[str] = []
     db = StateDB()
@@ -92,51 +250,73 @@ def summarize_episode(
     )
     if chunks_path.exists():
         for c in json.loads(chunks_path.read_text(encoding="utf-8")):
-            cached_chunks[c["chunk_index"]] = c["summary"]
+            if _is_chunk_cache_fresh(c):
+                cached_chunks[c["chunk_index"]] = c["summary"]
 
-    # Pass 1 — one summary per 5-chapter chunk
-    for chunk_idx, start in enumerate(range(0, len(chapter_nums), chapters_per_chunk)):
-        # Re-use cached summary if available
+    # Pass 1 — dynamic packing: fill each LLM call as many full chapters as context allows
+    max_chars = _max_content_chars()
+    chunk_idx = 0
+    current_nums: List[int] = []
+    current_texts: List[str] = []
+    current_len = 0
+
+    def _flush() -> None:
+        nonlocal chunk_idx, current_nums, current_texts, current_len
+        if not current_texts:
+            return
         if chunk_idx in cached_chunks:
             chunk_summaries.append(cached_chunks[chunk_idx])
             logger.debug("Chunk {} cached, skipping LLM | episode={}", chunk_idx, episode_num)
-            continue
-
-        batch = chapter_nums[start : start + chapters_per_chunk]
-        texts = []
-        for ch_num in batch:
-            content = db.get_chapter_content(ch_num)
-            if content:
-                # Truncate long chapters to keep total prompt manageable
-                texts.append(f"=== Chương {ch_num} ===\n{content[:3000]}")
-
-        if not texts:
-            logger.warning(
-                "No content for chunk {} episode {}", chunk_idx, episode_num
+        else:
+            logger.debug(
+                "Summarizing chunk {} | episode={} chapters={}-{} chars={}",
+                chunk_idx, episode_num, current_nums[0], current_nums[-1], current_len,
             )
-            continue
-
-        summary = _summarize_chunk("\n\n".join(texts), chunk_idx, episode_num)
-        chunk_summaries.append(summary)
-        _save_chunk_summary(
-            ChunkSummary(
-                episode_num=episode_num,
-                chunk_index=chunk_idx,
-                chapter_start=batch[0],
-                chapter_end=batch[-1],
-                summary=summary,
+            summary = _summarize_chunk("\n\n".join(current_texts), chunk_idx, episode_num)
+            chunk_summaries.append(summary)
+            _save_chunk_summary(
+                ChunkSummary(
+                    episode_num=episode_num,
+                    chunk_index=chunk_idx,
+                    chapter_start=current_nums[0],
+                    chapter_end=current_nums[-1],
+                    summary=summary,
+                )
             )
-        )
+        chunk_idx += 1
+        current_nums = []
+        current_texts = []
+        current_len = 0
+
+    for ch_num in chapter_nums:
+        content = db.get_chapter_content(ch_num)
+        if not content:
+            continue
+        ch_text = f"=== Chương {ch_num} ===\n{content}"
+        # Flush current batch before adding if it would overflow context
+        if current_texts and current_len + len(ch_text) > max_chars:
+            _flush()
+        current_nums.append(ch_num)
+        current_texts.append(ch_text)
+        current_len += len(ch_text)
+
+    _flush()  # flush remaining chapters
 
     logger.info(
-        "Pass 1 done | episode={} chunks={}", episode_num, len(chunk_summaries)
+        "Pass 1 done | episode={} chunks={} max_chars_per_chunk={}",
+        episode_num, len(chunk_summaries), max_chars,
     )
 
     # Pass 2 — synthesize arc
     arc = _synthesize_arc(chunk_summaries, episode_num)
 
     arc_path.parent.mkdir(parents=True, exist_ok=True)
-    arc_path.write_text(arc.model_dump_json(indent=2), encoding="utf-8")
+    arc_payload = arc.model_dump()
+    arc_payload["summary_version"] = _SUMMARY_PROMPT_VERSION
+    arc_path.write_text(
+        json.dumps(arc_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     logger.info(
         "Pass 2 done | episode={} arc_len={}", episode_num, len(arc.arc_summary)
@@ -152,7 +332,11 @@ def load_arc_overview(episode_num: int) -> ArcOverview:
     )
     if not path.exists():
         raise FileNotFoundError(f"Arc overview not found for episode {episode_num}")
-    return ArcOverview(**json.loads(path.read_text(encoding="utf-8")))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["characters_in_episode"] = _normalize_characters_in_episode(
+        data.get("characters_in_episode", [])
+    )
+    return ArcOverview(**data)
 
 
 def _save_chunk_summary(chunk: ChunkSummary) -> None:
@@ -168,7 +352,9 @@ def _save_chunk_summary(chunk: ChunkSummary) -> None:
         existing = json.loads(path.read_text(encoding="utf-8"))
 
     existing = [c for c in existing if c.get("chunk_index") != chunk.chunk_index]
-    existing.append(chunk.model_dump())
+    payload = chunk.model_dump()
+    payload["summary_version"] = _SUMMARY_PROMPT_VERSION
+    existing.append(payload)
     existing.sort(key=lambda x: x["chunk_index"])
 
     path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")

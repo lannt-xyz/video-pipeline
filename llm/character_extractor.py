@@ -132,7 +132,7 @@ def extract_all_characters(force: bool = False) -> List[Character]:
     if force:
         target_names = all_names
     else:
-        target_names = [n for n in all_names if not (chars_dir / f"{_slugify(n)}.json").exists()]
+        target_names = [n for n in all_names if not (chars_dir / _slugify(n) / "profile.json").exists()]
     if not target_names:
         logger.info("All characters already have JSON files — skipping extraction")
         return load_all_characters()
@@ -207,7 +207,8 @@ def extract_all_characters(force: bool = False) -> List[Character]:
         # fix forbidden male hairstyles, trim excess weights.
         char.description = _sanitize_description(char.description, char.gender)
 
-        char_path = chars_dir / f"{_slugify(name)}.json"
+        char_path = chars_dir / _slugify(name) / "profile.json"
+        char_path.parent.mkdir(parents=True, exist_ok=True)
         char_path.write_text(char.model_dump_json(indent=2), encoding="utf-8")
         logger.info("Saved character | name={} gender={}", char.name, char.gender)
         saved.append(char)
@@ -326,11 +327,49 @@ def _default_character(name: str) -> Character:
 
 def load_character(name: str) -> Character:
     char_path = (
-        Path(settings.data_dir) / "characters" / f"{_slugify(name)}.json"
+        Path(settings.data_dir) / "characters" / _slugify(name) / "profile.json"
     )
     if not char_path.exists():
         raise FileNotFoundError(f"Character not found: {name}")
     return Character(**json.loads(char_path.read_text(encoding="utf-8")))
+
+
+def _get_active_character_ids() -> "set[str] | None":
+    """Return set of active character_ids (is_delete=0) from wiki DB.
+
+    Returns None when the DB is unavailable or the column does not exist,
+    which signals the caller to skip filtering (backward-compatible).
+    Avoids circular imports by not importing from profile_builder.
+    """
+    import sqlite3 as _sqlite3
+
+    db_path = Path(settings.db_path)
+    if not db_path.exists():
+        return None
+    try:
+        con = _sqlite3.connect(str(db_path))
+        con.row_factory = _sqlite3.Row
+        try:
+            table_exists = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='wiki_characters'"
+            ).fetchone()
+            if not table_exists:
+                return None
+            col_names = {
+                row["name"]
+                for row in con.execute("PRAGMA table_info(wiki_characters)").fetchall()
+            }
+            if "is_delete" not in col_names:
+                return None
+            rows = con.execute(
+                "SELECT character_id FROM wiki_characters WHERE is_delete = 0"
+            ).fetchall()
+            return {row["character_id"] for row in rows}
+        finally:
+            con.close()
+    except Exception as exc:
+        logger.debug("Could not resolve active character IDs from DB | error={}", exc)
+        return None
 
 
 def load_all_characters() -> List[Character]:
@@ -338,8 +377,14 @@ def load_all_characters() -> List[Character]:
     if not chars_dir.exists():
         return []
 
+    active_ids = _get_active_character_ids()
+
     characters = []
-    for f in chars_dir.glob("*.json"):
+    for f in chars_dir.glob("*/profile.json"):
+        char_id = f.parent.name
+        if active_ids is not None and char_id not in active_ids:
+            logger.debug("Skipping deleted character | id={}", char_id)
+            continue
         try:
             characters.append(
                 Character(**json.loads(f.read_text(encoding="utf-8")))

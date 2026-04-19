@@ -23,12 +23,12 @@ def mix_narration_with_bgm(
 
         bgm_linear = _db_to_linear(settings.bgm_volume_db)
 
-        # Pad narration: 200ms silence at start (prevents first syllable from being
-        # hard-cut), 500ms silence at end (buffer before zoompan -t duration trim).
+        # Pad narration with configurable lead-in and tail silence.
+        # Lead-in protects first syllable; tail avoids hard cut near clip end.
         narration_padded = (
             narration.audio
-            .filter("adelay", "200:all=1")
-            .filter("apad", pad_dur=0.5)
+            .filter("adelay", f"{int(max(0.0, settings.tts_lead_in_sec) * 1000)}:all=1")
+            .filter("apad", pad_dur=max(0.0, settings.tts_tail_padding_sec))
         )
 
         mixed = ffmpeg.filter(
@@ -55,7 +55,7 @@ def mix_narration_with_bgm(
         # apad has no EOF signal and will loop forever.
         narration_padded = (
             ffmpeg.input(str(narration_path)).audio
-            .filter("adelay", "200:all=1")
+            .filter("adelay", f"{int(max(0.0, settings.tts_lead_in_sec) * 1000)}:all=1")
         )
         (
             ffmpeg.output(

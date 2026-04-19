@@ -71,7 +71,7 @@ class TestSummarizer:
                 load_arc_overview(999)
 
     def test_save_and_load_chunk_summary(self, tmp_path):
-        from llm.summarizer import _save_chunk_summary
+        from llm.summarizer import _save_chunk_summary, _SUMMARY_PROMPT_VERSION
         from models.schemas import ChunkSummary
 
         chunk = ChunkSummary(
@@ -92,6 +92,23 @@ class TestSummarizer:
         )
         assert len(saved) == 1
         assert saved[0]["summary"] == "Test summary content"
+        assert saved[0]["summary_version"] == _SUMMARY_PROMPT_VERSION
+
+    def test_normalize_characters_filters_unresolved_id_tokens(self):
+        from llm.summarizer import _normalize_characters_in_episode
+
+        with patch(
+            "llm.summarizer._load_character_lookup",
+            return_value=(
+                {"qing_yun_zi": "Thanh Vân Tử"},
+                {"thanh vân tử": "Thanh Vân Tử", "thiếu dương": "Thiếu Dương"},
+            ),
+        ):
+            out = _normalize_characters_in_episode(
+                ["qing_yun_zi", "Thiếu Dương", "unknown_slug_name"]
+            )
+
+        assert out == ["Thanh Vân Tử", "Thiếu Dương"]
 
 
 # ── Scriptwriter ──────────────────────────────────────────────────────────────
@@ -174,6 +191,15 @@ class TestScriptwriter:
             mock_settings.data_dir = "/nonexistent"
             with pytest.raises(FileNotFoundError):
                 load_episode_script(999)
+
+    def test_build_characters_ref_skips_unresolved_id_like_tokens(self):
+        from llm.scriptwriter import _build_characters_ref
+
+        with patch("llm.character_extractor.load_all_characters", return_value=[]):
+            ref = _build_characters_ref(["qing_yun_zi", "Thiếu Dương"])
+
+        assert "qing_yun_zi" not in ref
+        assert "Thiếu Dương" in ref
 
 
 # ── Schemas validation ─────────────────────────────────────────────────────────

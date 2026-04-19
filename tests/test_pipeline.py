@@ -37,7 +37,6 @@ class TestStateDB:
             chapter_num=1,
             title="Ch 1",
             url="http://example.com",
-            file_path="/data/chuong-0001.txt",
             status="CRAWLED",
             crawled_at=datetime.now(timezone.utc),
         )
@@ -54,7 +53,6 @@ class TestStateDB:
                 chapter_num=5,
                 title="Ch 5",
                 url="http://example.com",
-                file_path="/data/chuong-0005.txt",
                 status="CRAWLED",
                 crawled_at=datetime.now(timezone.utc),
             )
@@ -63,7 +61,7 @@ class TestStateDB:
     def test_set_chapter_status_error(self, db):
         from datetime import datetime, timezone
 
-        db.upsert_chapter(1, "Ch 1", "http://x.com", "/f", "CRAWLED", None)
+        db.upsert_chapter(1, "Ch 1", "http://x.com", "CRAWLED", None)
         db.set_chapter_status(1, "ERROR", error_msg="timeout")
         assert db.get_chapter_status(1) == "ERROR"
 
@@ -71,7 +69,7 @@ class TestStateDB:
         from datetime import datetime, timezone
 
         for n in [1, 2, 3, 4, 5]:
-            db.upsert_chapter(n, f"Ch{n}", "http://x.com", f"/f{n}", "CRAWLED", None)
+            db.upsert_chapter(n, f"Ch{n}", "http://x.com", "CRAWLED", None)
         # Chapter 3 set to ERROR
         db.set_chapter_status(3, "ERROR")
 
@@ -228,3 +226,44 @@ class TestComfyUIClient:
             client.poll_interval = 0
             with pytest.raises(ComfyUIOutOfMemoryError):
                 client.poll_result("test-id")
+
+
+class TestImagePromptEnrichment:
+    def test_detect_holding_context_true(self):
+        from pipeline.orchestrator import _prompt_mentions_holding_context
+
+        assert _prompt_mentions_holding_context(
+            "daoist figure holding a glowing talisman in hand"
+        ) is True
+
+    def test_detect_holding_context_false(self):
+        from pipeline.orchestrator import _prompt_mentions_holding_context
+
+        assert _prompt_mentions_holding_context(
+            "empty ruined shrine corridor, drifting fog"
+        ) is False
+
+    def test_artifact_tags_from_text_maps_weapon_and_material(self):
+        from pipeline.orchestrator import _artifact_tags_from_text
+
+        tags = _artifact_tags_from_text(
+            "Kiếm trấn tà bằng đồng khắc phù văn, phát sáng"
+        )
+        assert "ornate daoist sword" in tags
+        assert "aged bronze texture" in tags
+        assert "glowing runic aura" in tags
+
+    def test_build_artifact_prompt_tags_uses_character_hints(self):
+        from pipeline.orchestrator import _build_artifact_prompt_tags
+        from models.schemas import Character
+
+        char = Character(name="Diệp Thiếu Dương", gender="male", description="1boy, solo")
+        hints = {
+            "diệp thiếu dương": ["ornate daoist sword", "intricate rune engravings"]
+        }
+        tags = _build_artifact_prompt_tags(
+            "daoist figure holding weapon in hand",
+            [(char, ["/tmp/anchor.png"])],
+            hints,
+        )
+        assert "ornate daoist sword" in tags

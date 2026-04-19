@@ -1,4 +1,5 @@
 import argparse
+import sqlite3
 import shutil
 import sys
 from pathlib import Path
@@ -66,11 +67,15 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     summarize_episode(episode_num, chapter_start, chapter_end)
     db.set_episode_status(episode_num, "SUMMARIZED")
 
-    # Extract characters once from arc summaries (idempotent — skips existing JSONs)
-    if episode_num == 1:
-        from llm.character_extractor import extract_all_characters
-        logger.info("Extracting characters from arc summaries")
-        extract_all_characters()
+    # Build profiles only for characters that appear in this episode (idempotent).
+    from llm.profile_builder import build_profiles_for_episode
+    from llm.summarizer import load_arc_overview
+    arc = load_arc_overview(episode_num)
+    logger.info(
+        "Building character profiles for episode | episode={} chars={}",
+        episode_num, arc.characters_in_episode,
+    )
+    build_profiles_for_episode(arc.characters_in_episode)
 
     logger.info("Writing script | episode={}", episode_num)
     write_episode_script(episode_num)
@@ -134,6 +139,208 @@ _CLOTHING_KEYWORDS = frozenset([
     "coat", "hanfu", "clothing", "wear", "outfit", "attire", "suit", "uniform",
     "apron",
 ])
+
+
+_SCENE_DETAIL_BOOST_TAGS = (
+    "intricate foreground props",
+    "clear midground subject separation",
+    "deep layered background",
+    "cinematic volumetric lighting",
+)
+
+_HOLDING_CONTEXT_KEYWORDS = frozenset([
+    "holding", "in hand", "wielding", "brandishing", "weapon", "artifact",
+    "relic", "sword", "blade", "staff", "talisman", "seal",
+    "cầm", "nắm", "giơ", "vung", "pháp khí", "kiếm", "đao", "trượng", "phù", "ấn",
+])
+
+# Vietnamese/English keyword mapping to concise English visual tags for ComfyUI.
+_ARTIFACT_TAG_HINTS = [
+    (("kiếm", "sword"), ("ornate daoist sword", "engraved metal blade")),
+    (("đao", "blade"), ("ritual curved blade",)),
+    (("trượng", "staff"), ("carved taoist staff", "ritual staff in hand")),
+    (("phù", "talisman", "bùa"), ("yellow talisman strips", "paper talisman in hand")),
+    (("ấn", "seal"), ("daoist seal in hand", "engraved ritual seal")),
+    (("chuông", "bell"), ("small ritual hand bell",)),
+    (("hồ lô", "gourd"), ("daoist gourd flask",)),
+    (("gương", "mirror", "bagua"), ("bagua mirror",)),
+    (("la bàn", "la ban", "compass"), ("feng shui compass",)),
+]
+
+_ARTIFACT_MATERIAL_HINTS = [
+    (("đồng", "bronze"), "aged bronze texture"),
+    (("ngọc", "jade"), "jade inlays"),
+    (("gỗ", "wood"), "weathered wood grain"),
+    (("sắt", "iron", "steel"), "dark forged metal finish"),
+]
+
+
+def _enhance_scene_detail_tags(prompt_text: str) -> str:
+    """Append small, stable detail tags so scene prompts are consistently richer."""
+    base = prompt_text.strip()
+    lower = base.lower()
+    extra = [t for t in _SCENE_DETAIL_BOOST_TAGS if t not in lower]
+    if not extra:
+        return base
+    return ", ".join([p for p in [base, *extra] if p])
+
+
+def _prompt_mentions_holding_context(prompt_text: str) -> bool:
+    """Return True when prompt implies a character is holding/using a weapon/artifact."""
+    lower = prompt_text.lower()
+    return any(k in lower for k in _HOLDING_CONTEXT_KEYWORDS)
+
+
+def _artifact_tags_from_text(text: str) -> list[str]:
+    """Extract concise English visual tags from artifact text fields."""
+    lower = text.lower()
+    tags: list[str] = []
+
+    for keywords, hint_tags in _ARTIFACT_TAG_HINTS:
+        if any(k in lower for k in keywords):
+            tags.extend(hint_tags)
+
+    for keywords, material_tag in _ARTIFACT_MATERIAL_HINTS:
+        if any(k in lower for k in keywords):
+            tags.append(material_tag)
+
+    if ("phát sáng" in lower) or ("hào quang" in lower) or ("glow" in lower):
+        tags.append("glowing runic aura")
+    if ("khắc" in lower) or ("rune" in lower) or ("chạm" in lower):
+        tags.append("intricate rune engravings")
+
+    # Dedupe while preserving order.
+    unique: list[str] = []
+    seen = set()
+    for t in tags:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
+    return unique
+
+
+def _resolve_wiki_db_for_artifacts() -> Path | None:
+    """Resolve DB path that contains wiki artifact tables."""
+    candidates = [
+        Path(settings.db_path),
+        Path("data") / f"{settings.story_slug}.db",
+    ]
+
+    for db_path in candidates:
+        if not db_path.exists():
+            continue
+        try:
+            con = sqlite3.connect(str(db_path))
+            tables = {
+                row[0] for row in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            con.close()
+        except Exception:
+            continue
+
+        required = {"wiki_characters", "wiki_artifacts", "wiki_artifact_snapshots"}
+        if required.issubset(tables):
+            return db_path
+
+    return None
+
+
+def _load_character_artifact_hints() -> dict[str, list[str]]:
+    """Load per-character artifact visual hints from wiki DB.
+
+    Returns mapping: character_name_lower -> list of English visual tags.
+    """
+    db_path = _resolve_wiki_db_for_artifacts()
+    if db_path is None:
+        return {}
+
+    hints: dict[str, list[str]] = {}
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+
+        char_cols = {
+            r[1] for r in con.execute("PRAGMA table_info(wiki_characters)").fetchall()
+        }
+        char_filter = " WHERE c.is_delete = 0" if "is_delete" in char_cols else ""
+
+        rows = con.execute(
+            "SELECT c.name AS char_name, a.name AS artifact_name, "
+            "COALESCE(a.material, '') AS material, COALESCE(a.visual_anchor, '') AS visual_anchor, "
+            "COALESCE(s.normal_state, '') AS normal_state, COALESCE(s.active_state, '') AS active_state, "
+            "COALESCE(s.is_key_event, 0) AS is_key_event, COALESCE(s.chapter_start, 0) AS chapter_start "
+            "FROM wiki_characters c "
+            "JOIN wiki_artifact_snapshots s ON s.owner_id = c.character_id "
+            "JOIN wiki_artifacts a ON a.artifact_id = s.artifact_id"
+            f"{char_filter} "
+            "ORDER BY c.name, is_key_event DESC, chapter_start ASC"
+        ).fetchall()
+        con.close()
+    except Exception as exc:
+        logger.debug("Failed to load artifact hints from DB | err={}", exc)
+        return {}
+
+    seen_artifact_per_char: dict[str, set[str]] = {}
+
+    for row in rows:
+        char_name = str(row["char_name"]).strip()
+        if not char_name:
+            continue
+        key = char_name.lower()
+
+        artifact_name = str(row["artifact_name"] or "").strip().lower()
+        seen_for_char = seen_artifact_per_char.setdefault(key, set())
+        if artifact_name and artifact_name in seen_for_char:
+            continue
+
+        # Keep top 2 artifact entries per character to avoid overloading prompts.
+        if len(seen_for_char) >= 2:
+            continue
+
+        raw = " | ".join([
+            str(row["artifact_name"] or ""),
+            str(row["material"] or ""),
+            str(row["visual_anchor"] or ""),
+            str(row["normal_state"] or ""),
+            str(row["active_state"] or ""),
+        ])
+        tags = _artifact_tags_from_text(raw)
+        if not tags:
+            # Keep a safe fallback so "artifact in hand" is still explicit.
+            tags = ["ritual artifact in hand"]
+
+        existing = hints.setdefault(key, [])
+        for t in tags:
+            if t not in existing:
+                existing.append(t)
+
+        if artifact_name:
+            seen_for_char.add(artifact_name)
+
+    return hints
+
+
+def _build_artifact_prompt_tags(
+    prompt_text: str,
+    char_anchor_pairs: list,
+    artifact_hints_by_name: dict[str, list[str]] | None,
+) -> str:
+    """Build artifact detail tags for shot prompts when holding context is present."""
+    if not artifact_hints_by_name or not _prompt_mentions_holding_context(prompt_text):
+        return ""
+
+    merged: list[str] = []
+    for char_obj, _ in char_anchor_pairs[:2]:
+        if not char_obj:
+            continue
+        for t in artifact_hints_by_name.get(char_obj.name.lower(), []):
+            if t not in merged:
+                merged.append(t)
+
+    # Limit to avoid over-constraining composition.
+    return ", ".join(merged[:6])
 
 
 def _extract_clothing_tags(description: str) -> str:
@@ -219,6 +426,7 @@ def _build_shot_image_params(
     prompt_text: str,
     char_anchor_pairs: list,
     seed: int,
+    artifact_hints_by_name: dict[str, list[str]] | None = None,
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
@@ -236,6 +444,22 @@ def _build_shot_image_params(
     _ANTI_SPLIT_DUAL = ", (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5), (4girls:1.5), (4boys:1.5)"
     _ANTI_SPLIT_SINGLE = ", (2girls:1.5), (2boys:1.5), (multiple girls:1.5), (multiple boys:1.5), (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5)"
 
+    def _character_identity_hint(char_obj) -> str:
+        if not char_obj:
+            return ""
+        dna_text = _extract_dna_tags(char_obj.description)
+        clothing_text = _extract_clothing_tags(char_obj.description)
+        parts = [p for p in [clothing_text, dna_text] if p]
+        if not parts:
+            return ""
+        # Keep identity hints lightweight so scene composition still dominates.
+        return f"({', '.join(parts)}:0.9)"
+
+    detailed_scene = _enhance_scene_detail_tags(prompt_text)
+    artifact_detail_tags = _build_artifact_prompt_tags(
+        prompt_text, char_anchor_pairs, artifact_hints_by_name
+    )
+
     if len(char_anchor_pairs) >= 2:
         genders = [c.gender if c else "male" for c, _ in char_anchor_pairs]
         count_tag = (
@@ -243,11 +467,18 @@ def _build_shot_image_params(
             else "2girls" if all(g == "female" for g in genders)
             else "1boy, 1girl"
         )
+        identity_hints = [
+            _character_identity_hint(char_obj)
+            for char_obj, _ in char_anchor_pairs[:2]
+        ]
+        scene_prompt = ", ".join(
+            [p for p in [count_tag, detailed_scene, artifact_detail_tags, *identity_hints] if p]
+        )
         workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
         replacements = {
             # Dual-char: IPAdapter anchors carry both visual identities;
-            # text only needs count tag + scene (avoid DNA tag conflicts between chars)
-            "SCENE_PROMPT": f"{count_tag}, {prompt_text}",
+            # add low-weight identity hints from profile to reinforce each anchor.
+            "SCENE_PROMPT": scene_prompt,
             "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_DUAL,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
@@ -264,8 +495,11 @@ def _build_shot_image_params(
         clothing_text = _extract_clothing_tags(char_obj.description) if char_obj else ""
         # Scene-first ordering: background/environment gets higher priority than character tags.
         # Wrapping scene in (…:1.2) prevents IPAdapter from crowding out the background.
-        weighted_scene = f"({prompt_text}:1.2)" if prompt_text else ""
-        parts = [p for p in [weighted_scene, gender_tag, "solo", clothing_text, dna_text] if p]
+        weighted_scene = f"({detailed_scene}:1.2)" if detailed_scene else ""
+        parts = [
+            p for p in [weighted_scene, artifact_detail_tags, gender_tag, "solo", clothing_text, dna_text]
+            if p
+        ]
         scene_prompt = ", ".join(parts)
         workflow = "image_gen/workflows/txt2img_ipadapter.json"
         replacements = {
@@ -284,7 +518,9 @@ def _build_shot_image_params(
     else:
         workflow = "image_gen/workflows/txt2img_scene.json"
         replacements = {
-            "SCENE_PROMPT": prompt_text,
+            "SCENE_PROMPT": ", ".join(
+                [p for p in [detailed_scene, artifact_detail_tags] if p]
+            ),
             "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
@@ -320,6 +556,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
     # Build name→Character map for shared helpers
     characters_map = {c.name: c for c in load_all_characters()}
+    artifact_hints_by_name = _load_character_artifact_hints()
 
     db.record_phase_start(episode_num, "images")
 
@@ -353,7 +590,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             seed = episode_num * 10000 + idx * 100 + fidx
 
             workflow, replacements = _build_shot_image_params(
-                prompt_text, char_anchor_pairs, seed
+                prompt_text, char_anchor_pairs, seed, artifact_hints_by_name
             )
 
             try:
