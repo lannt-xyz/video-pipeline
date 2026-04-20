@@ -216,6 +216,113 @@ def _load_supplemental_snapshots(character_id: str, con: sqlite3.Connection, lim
 
 
 # ---------------------------------------------------------------------------
+# Chapter-context fallback helpers
+# ---------------------------------------------------------------------------
+
+_CONTEXT_INFER_SYSTEM = """You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL).
+You receive raw Vietnamese story excerpts mentioning a character. Infer their appearance from context clues.
+
+OUTPUT — return a single JSON object:
+{
+  "name": "full Vietnamese name as written in the text",
+  "alias": [],
+  "gender": "male | female | unknown",
+  "description": "12+ comma-separated Danbooru tags — NO prose",
+  "relationships": {}
+}
+
+RULES:
+- Infer gender from: pronouns (ông/anh/cậu → male; bà/cô/chị → female), role titles, family titles.
+- Infer age/build from: role (con trai = young man; vợ = adult woman; lão = elderly).
+- MANDATORY description categories: hair color+style, eye expression, outfit (context-appropriate), body type, expression.
+- Setting = modern Vietnamese rural/urban ghost-hunter story. Default: modern casual clothing.
+- FORBIDDEN tags: mysterious aura, spiritual energy, ethereal, enchanting — use visual equivalents only.
+- Minimum 12 tags. Start with gender count tag: 1boy/1girl/1other, solo.
+- If no physical description clues at all, generate plausible appearance for role/age inferred from context."""
+
+_CONTEXT_SNIPPET_WINDOW = 400  # chars around each mention
+_CONTEXT_MAX_SNIPPETS = 5
+_CONTEXT_MAX_CHARS = 2000  # total chars sent to LLM
+
+
+def _load_chapter_context(
+    character_id: str,
+    char_name: str,
+    aliases: list[str],
+    con: sqlite3.Connection,
+) -> Optional[str]:
+    """Search chapters.content for the character name/aliases and return
+    concatenated context snippets for LLM inference.
+
+    Returns None when the chapters table doesn't exist or has no content.
+    """
+    # Check table exists
+    tables = {r[0] for r in con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    if "chapters" not in tables:
+        return None
+
+    search_names = [char_name] + aliases
+
+    # Collect chapter_nums from wiki_mention_index first (fast path).
+    mention_chapters: list[int] = []
+    if "wiki_mention_index" in tables:
+        rows = con.execute(
+            "SELECT DISTINCT chapter_num FROM wiki_mention_index WHERE character_id = ? ORDER BY chapter_num",
+            (character_id,),
+        ).fetchall()
+        mention_chapters = [r[0] for r in rows]
+
+    # Fallback: LIKE search across all chapters if mention_index is empty.
+    if not mention_chapters:
+        like_clauses = " OR ".join(["content LIKE ?" for _ in search_names])
+        params = [f"%{n}%" for n in search_names]
+        rows = con.execute(
+            f"SELECT chapter_num FROM chapters WHERE ({like_clauses}) AND content IS NOT NULL ORDER BY chapter_num LIMIT 10",
+            params,
+        ).fetchall()
+        mention_chapters = [r[0] for r in rows]
+
+    if not mention_chapters:
+        return None
+
+    snippets: list[str] = []
+    total_chars = 0
+
+    for ch_num in mention_chapters:
+        if len(snippets) >= _CONTEXT_MAX_SNIPPETS or total_chars >= _CONTEXT_MAX_CHARS:
+            break
+        row = con.execute(
+            "SELECT content FROM chapters WHERE chapter_num = ?", (ch_num,)
+        ).fetchone()
+        if not row or not row[0]:
+            continue
+        content: str = row[0]
+
+        # Find first mention of any search name in this chapter.
+        best_idx = -1
+        for name in search_names:
+            idx = content.find(name)
+            if idx != -1 and (best_idx == -1 or idx < best_idx):
+                best_idx = idx
+
+        if best_idx == -1:
+            continue
+
+        start = max(0, best_idx - _CONTEXT_SNIPPET_WINDOW // 2)
+        end = min(len(content), best_idx + _CONTEXT_SNIPPET_WINDOW // 2)
+        snippet = content[start:end].strip()
+        snippets.append(f"[Chương {ch_num}] ...{snippet}...")
+        total_chars += len(snippet)
+
+    if not snippets:
+        return None
+
+    return "\n\n".join(snippets)
+
+
+# ---------------------------------------------------------------------------
 # Markdown builder
 # ---------------------------------------------------------------------------
 
@@ -259,25 +366,52 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
 
     lines: list[str] = []
 
+    # Helper: treat DB string "null" / "none" / empty as missing value.
+    def _val(v) -> Optional[str]:
+        s = (v or "").strip()
+        return s if s and s.lower() not in ("null", "none", "n/a") else None
+
+    # Infer gender from visual_anchor text when DB gender is NULL.
+    # Simple keyword match on the first 60 chars covers "Nam giới" / "Nữ giới" reliably.
+    def _infer_gender_from_anchor(anchor_text: Optional[str]) -> Optional[str]:
+        if not anchor_text:
+            return None
+        sample = anchor_text[:60].lower()
+        if any(k in sample for k in ("nam giới", "nam nhân", "đàn ông", "con trai", "chàng trai", "lão ông", "cụ ông")):
+            return "male"
+        if any(k in sample for k in ("nữ giới", "nữ nhân", "đàn bà", "con gái", "thiếu nữ", "cô gái", "cô nương", "nương tử")):
+            return "female"
+        return None
+
     # --- Header ---
     lines.append(f"# {char['name']}")
     lines.append("")
 
-    header_parts: list[str] = []
-    gender = char.get("gender")
-    if gender:
-        header_parts.append(f"**Giới tính**: {gender}")
-    else:
-        header_parts.append("**Giới tính**: unknown")
+    # Gender on its own line — matches system-prompt GENDER RULES pattern exactly.
+    gender = _val(char.get("gender"))
+    if gender is None:
+        # Visual anchor often starts with "Nam giới" or "Nữ giới" — infer from there.
+        inferred = _infer_gender_from_anchor(_val(char.get("visual_anchor")))
+        if inferred:
+            gender = inferred
+            logger.debug(
+                "Gender inferred from visual_anchor | id={} name={} → {}",
+                char.get("id"), char.get("name"), gender,
+            )
+    gender = gender or "unknown"
+    lines.append(f"**Giới tính**: {gender}")
 
-    if char.get("faction"):
-        header_parts.append(f"**Phe**: {char['faction']}")
+    meta_parts: list[str] = []
+    faction = _val(char.get("faction"))
+    if faction:
+        meta_parts.append(f"**Phe**: {faction}")
 
     ver = char.get("remaster_version")
     if ver:
-        header_parts.append(f"**Dữ liệu v{ver}**")
+        meta_parts.append(f"**Dữ liệu v{ver}**")
 
-    lines.append(" | ".join(header_parts))
+    if meta_parts:
+        lines.append(" | ".join(meta_parts))
 
     if char["aliases_json"]:
         lines.append(f"**Tên khác**: {', '.join(char['aliases_json'])}")
@@ -535,7 +669,7 @@ def build_profiles_for_episode(
                 " AND is_deleted = 0" if _wiki_characters_has_is_delete(con) else ""
             )
             wiki_row = con.execute(
-                f"SELECT name FROM wiki_characters WHERE character_id=?{canonical_name_filter}",
+                f"SELECT name, gender FROM wiki_characters WHERE character_id=?{canonical_name_filter}",
                 (char_id,),
             ).fetchone()
             char_name = wiki_row["name"] if wiki_row else char_id
@@ -553,13 +687,37 @@ def build_profiles_for_episode(
             try:
                 md = build_markdown(char_id, con)
                 if md is None:
-                    logger.debug("No visual data, skipping | id={}", char_id)
-                    skipped += 1
-                    continue
+                    # No wiki data — try to infer from chapter context.
+                    char_data = _load_wiki_character(char_id, con)
+                    aliases = (char_data or {}).get("aliases_json") or []
+                    context = _load_chapter_context(char_id, char_name, aliases, con)
+                    if context is None:
+                        logger.debug("No visual data or chapter context, skipping | id={}", char_id)
+                        skipped += 1
+                        continue
 
-                md_path.write_text(md, encoding="utf-8")
+                    logger.info(
+                        "No wiki visual data — inferring from chapter context | id={} snippets_chars={}",
+                        char_id, len(context),
+                    )
+                    raw = ollama_client.generate_json(
+                        prompt=(
+                            f"Character name: {char_name}\n\n"
+                            f"Story excerpts mentioning this character:\n\n{context}"
+                        ),
+                        system=_CONTEXT_INFER_SYSTEM,
+                        temperature=0.3,
+                    )
+                    if isinstance(raw, list) and raw:
+                        raw = raw[0]
+                    if not isinstance(raw, dict):
+                        logger.warning("Context inference returned unexpected type | id={}", char_id)
+                        skipped += 1
+                        continue
+                else:
+                    md_path.write_text(md, encoding="utf-8")
+                    raw = _derive_tags(md)
 
-                raw = _derive_tags(md)
                 raw_path.write_text(
                     json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
@@ -640,7 +798,7 @@ def build_all_profiles(force: bool = False) -> list[Character]:
         active_filter = " WHERE is_deleted = 0" if _wiki_characters_has_is_delete(con) else ""
 
         cur = con.execute(
-            f"SELECT character_id, name FROM wiki_characters{active_filter} ORDER BY character_id"
+            f"SELECT character_id, name, gender FROM wiki_characters{active_filter} ORDER BY character_id"
         )
         all_chars = cur.fetchall()
         total = len(all_chars)

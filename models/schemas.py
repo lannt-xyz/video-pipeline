@@ -45,6 +45,7 @@ class ShotScript(BaseModel):
     characters: List[str] = []  # [] = scene-only shot, no IPAdapter
     camera_flow: CameraFlow = CameraFlow.WIDE_TO_CLOSE
     frames: List[FrameScript] = []  # populated by frame_decomposer, not LLM
+    scene_id: Optional[str] = None  # shared across shots in the same physical location, e.g. "coffin_shop"
 
 
 class EpisodeScript(BaseModel):

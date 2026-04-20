@@ -63,6 +63,7 @@ def build_anchor(char_id: str, chars_dir: Path, con, *, force: bool = False) -> 
         raw.setdefault("relationships", {})
 
         char = Character(**raw)
+
         if char.gender == "unknown":
             char.description = _sanitize_unknown(char.description)
         elif char.gender in ("male", "female"):

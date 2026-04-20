@@ -61,18 +61,26 @@ class VRAMManager:
     def acquire(self, consumer: VRAMConsumer) -> None:
         """Give exclusive VRAM to *consumer*.
 
-        If a different consumer currently holds VRAM it is released first.
+        Always evicts the opposite consumer unconditionally, regardless of
+        tracked state — the opposite process may hold VRAM without having
+        gone through acquire() (e.g. ComfyUI idle cache after a restart).
         No-op when the requested consumer already owns VRAM.
         """
         if self._current == consumer:
             logger.debug("VRAM already held by '{}' — no-op", consumer.value)
             return
 
-        if self._current != VRAMConsumer.NONE:
+        # Always evict the opposite side, even if _current says NONE.
+        opposite = {
+            VRAMConsumer.OLLAMA: VRAMConsumer.COMFYUI,
+            VRAMConsumer.COMFYUI: VRAMConsumer.OLLAMA,
+        }.get(consumer)
+        if opposite is not None:
             logger.info(
-                "VRAM handoff: '{}' → '{}'", self._current.value, consumer.value
+                "VRAM evict: '{}' before acquiring '{}'",
+                opposite.value, consumer.value,
             )
-            self._release(self._current)
+            self._release(opposite)
 
         self._current = consumer
         logger.info("VRAM acquired | owner='{}'", consumer.value)
@@ -286,20 +294,63 @@ class VRAMManager:
         logger.info("Ollama VRAM released | models_unloaded={}", unloaded)
 
     def _release_comfyui(self) -> None:
-        """Ask ComfyUI to free all cached models from VRAM."""
-        logger.info("Unloading ComfyUI models to free VRAM...")
-        try:
-            resp = httpx.post(
-                f"{settings.comfyui_url}/free",
-                json={"unload_models": True, "free_memory": True},
-                timeout=15.0,
-            )
-            logger.debug("ComfyUI /free response | status={}", resp.status_code)
-        except httpx.HTTPError as exc:
-            logger.warning("ComfyUI unload API failed | error={}", exc)
+        """Ask ComfyUI to free all cached models from VRAM.
 
-        time.sleep(2)
-        logger.info("ComfyUI VRAM released")
+        ComfyUI's /free triggers Python GC + torch.cuda.empty_cache(), but
+        the CUDA memory pages may not be returned to the OS immediately.
+        Strategy: interrupt any running job, then retry /free every
+        _COMFYUI_FREE_RETRY_INTERVAL_SEC until VRAM drops OR we exceed
+        _COMFYUI_FREE_MAX_RETRIES tries.  _wait_vram_free() does the final
+        assertion after this method returns.
+        """
+        _COMFYUI_FREE_RETRY_INTERVAL_SEC = 5
+        _COMFYUI_FREE_MAX_RETRIES = 6  # up to 30 s of retrying /free
+
+        logger.info("Unloading ComfyUI models to free VRAM...")
+
+        # 1. Interrupt any in-progress generation so models are safe to unload.
+        try:
+            httpx.post(f"{settings.comfyui_url}/interrupt", timeout=5.0)
+            logger.debug("ComfyUI /interrupt sent")
+        except httpx.HTTPError:
+            pass  # no running job — not an error
+
+        # 2. Retry /free until VRAM is measurably dropping.
+        for attempt in range(1, _COMFYUI_FREE_MAX_RETRIES + 1):
+            try:
+                resp = httpx.post(
+                    f"{settings.comfyui_url}/free",
+                    json={"unload_models": True, "free_memory": True},
+                    timeout=15.0,
+                )
+                logger.debug(
+                    "ComfyUI /free attempt={} status={}", attempt, resp.status_code
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "ComfyUI /free attempt={} failed | error={}", attempt, exc
+                )
+
+            free_gib = self._free_vram_gib()
+            if free_gib is not None and free_gib >= _VRAM_FREE_THRESHOLD_GIB:
+                logger.info(
+                    "ComfyUI VRAM released after {} attempt(s) | free={:.1f} GiB",
+                    attempt, free_gib,
+                )
+                return
+
+            if attempt < _COMFYUI_FREE_MAX_RETRIES:
+                logger.debug(
+                    "ComfyUI VRAM not yet free | free={:.1f} GiB — retrying in {}s",
+                    free_gib or 0.0, _COMFYUI_FREE_RETRY_INTERVAL_SEC,
+                )
+                time.sleep(_COMFYUI_FREE_RETRY_INTERVAL_SEC)
+
+        logger.warning(
+            "ComfyUI did not release VRAM after {} retries — "
+            "_wait_vram_free() will give a final verdict.",
+            _COMFYUI_FREE_MAX_RETRIES,
+        )
 
 
 vram_manager = VRAMManager()

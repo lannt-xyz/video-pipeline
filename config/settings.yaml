@@ -62,5 +62,5 @@ assets_dir: "assets"
 lora_weights:
   manhua_style: 0.7
   xianxia_fantasy: 0.5
-  dark_horror: 0.4
+  dark_horror: 0.6            # boosted for horror/supernatural atmosphere
   ink_wash: 0.6

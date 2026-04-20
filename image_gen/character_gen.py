@@ -23,9 +23,10 @@ def _slugify(name: str) -> str:
 
 _ANCHOR_WORKFLOW = "image_gen/workflows/anchor_gen.json"
 
+# Keep only generic ethnicity tags — do NOT include hair color here; it will
+# conflict with character-specific hair (white hair, grey hair, etc.).
 _ANCHOR_ETHNICITY_POSITIVE = (
-    "east asian facial features, chinese facial features, han chinese aesthetics, "
-    "asian eyes, black hair"
+    "east asian facial features, chinese facial features, han chinese aesthetics, asian eyes"
 )
 
 _NEGATIVE = (
@@ -47,10 +48,16 @@ _NEGATIVE = (
 
 
 def _build_anchor_scene_prompt(character: Character, angle_tags: str) -> str:
-    """Build a stable anchor prompt with explicit East Asian facial bias."""
+    """Build a stable anchor prompt with explicit East Asian facial bias.
+
+    Character description comes FIRST (highest CLIP attention weight) so
+    distinctive features (hair colour, age, facial hair) are not overridden
+    by the generic ethnicity baseline.
+    """
     return (
-        f"{_ANCHOR_ETHNICITY_POSITIVE}, {character.description}, "
+        f"({character.description}:1.15), "
         f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
+        f"{_ANCHOR_ETHNICITY_POSITIVE}, "
         "anime style, manhua art style, plain background, "
         "detailed face, high quality, masterpiece, best quality, ultra detailed"
     )

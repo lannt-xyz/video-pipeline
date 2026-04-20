@@ -12,6 +12,7 @@ from llm.summarizer import load_arc_overview
 from models.schemas import CameraFlow, EpisodeScript, ShotScript
 
 _SCRIPTWRITER_SYSTEM = """You are a Vietnamese short video scriptwriter for TikTok/YouTube Shorts.
+GENRE: HORROR / SUPERNATURAL / MYSTERY — this is a Maoshan exorcism story. Every shot must evoke dread, curiosity, or supernatural tension.
 You will receive ORDERED SCENES — story events in exact chronological order.
 
 YOUR TASK: Write EXACTLY 8 shots that cover the story from start to finish in order.
@@ -89,13 +90,22 @@ RIGHT: "stone courtyard at mountain temple summit, figure in meditation stance w
 WRONG: "outdoor gravesite, ancient tomb excavation, night scene, eerie moonlight, dark soil, stone ruins, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
 RIGHT: "muddy excavation pit with exposed stone sarcophagus, figure kneeling and prying open stone lid, scattered ritual candles on wet earth, ancient crumbling gateway half-buried behind, cold blue moonlight with drifting fog wisps, anime style, manhua art style, no text, no watermarks"
 
+HORROR ATMOSPHERE — CRITICAL for this story genre:
+Every scene_prompt MUST include at least 1 HORROR/SUPERNATURAL ATMOSPHERE element from this palette:
+- LIGHTING: "sickly green glow from below", "blood-red candle flame", "cold blue moonlight piercing through cracks", "flickering torch casting distorted shadows on walls", "pale ghostly luminescence", "dim amber candlelight barely reaching corners"
+- ENVIRONMENT: "crumbling moss-covered walls", "cobwebs hanging from ceiling beams", "mist creeping along the ground", "twisted dead tree silhouettes", "rusted iron chains on stone wall", "dark stain spreading on floor"
+- SUPERNATURAL: "faint ghostly silhouette in background", "glowing ritual symbols on ground", "unnatural fog swirling around ankles", "floating dust particles in shaft of pale light", "eerie green spirit wisps"
+- TENSION OBJECTS: "scattered yellowed talisman papers", "overturned ritual candles dripping wax", "cracked ancient mirror reflecting distorted image", "half-open coffin lid with darkness inside", "bloody handprint on wall"
+Choose elements appropriate to the specific scene — graveyard scenes get fog/moonlight, indoor scenes get candles/shadows, ritual scenes get glowing symbols/talismans.
+Do NOT use the word "mysterious" — use specific visual descriptors instead.
+
 FORBIDDEN in scene_prompt:
 - English sentences or clauses ("He walks into...", "Fifteen years later...")
 - Vietnamese words anywhere
 - Character names (Diệp Thiếu Dương, Tiểu Mã, etc.) — character appearance is handled separately
 - Character appearance descriptors (age, hair, eyes, physique, clothing of specific characters) — e.g., "old daoist", "black-haired girl", "young man in white robes". Use role/action tags instead: "daoist figure", "warrior silhouette", "female protagonist"
 - Adverbs or qualifiers ("mysteriously", "fiercely", "inadvertently")
-- NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, skinny, undressing, erotic, sensual, mysterious aura, bedroom eyes
+- NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, skinny, undressing, erotic, sensual, bedroom eyes
 - Generic placeholder tags: "dramatic lighting", "detailed background", "action pose", "fight scene" — be SPECIFIC
 - Extreme close-up framing tags: "extreme close-up", "extreme close-up detail", "face close-up", "macro shot" — these erase background context entirely. Use "medium close-up", "medium shot", or "wide shot" instead
 
@@ -117,10 +127,17 @@ OTHER RULES:
 - is_key_shot: Mark EXACTLY 2-3 shots as true — the most action-packed.
 - characters: CRITICAL — list the EXACT character names (from the provided Characters list) whose body, face, or silhouette is PHYSICALLY VISIBLE in the shot. If the scene_prompt describes only environment, objects, or atmosphere with NO human figure present, use []. DO NOT add a character just because they are the narrator or implied. MAXIMUM 2 characters per shot — never list 3 or more.
 
+SCENE_ID RULES — CRITICAL for visual consistency:
+- scene_id is a short snake_case English label for the physical location (e.g. "coffin_shop", "temple_gate", "dark_forest", "excavation_pit").
+- Assign the SAME scene_id to ALL shots that take place in the SAME physical location within this episode.
+- When the story moves to a new location, assign a NEW scene_id.
+- scene_id MUST be consistent with narration: if shots 3, 4, 5 all happen inside the coffin shop, all three get scene_id="coffin_shop".
+- Shots with the same scene_id will share base environment tags at image-generation time — so accuracy matters.
+
 Return JSON:
 {
   "title": "string — episode title in Vietnamese",
-  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "wide_to_close" } ]
+  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "wide_to_close", "scene_id": "location_slug" } ]
 }
 shots MUST have EXACTLY 8 elements. EXACTLY 2-3 must have is_key_shot=true.
 camera_flow MUST be one of: "wide_to_close", "close_to_wide", "pan_across", "detail_reveal", "static_close", "static_wide"."""
@@ -220,29 +237,35 @@ _ID_LIKE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
 # --------------------------------------------------------------------------- #
 #  Narration-to-scene-prompt alignment (LLM rewrite pass)                     #
 # --------------------------------------------------------------------------- #
-_NARRATION_ALIGN_SYSTEM = """You are a ComfyUI Stable Diffusion prompt engineer.
+_NARRATION_ALIGN_SYSTEM = """You are a ComfyUI Stable Diffusion prompt engineer for a HORROR/SUPERNATURAL story.
 You receive a list of video shot objects. Each shot has:
   - shot_index (int)
   - narration_text (Vietnamese sentence — what the narrator says)
   - scene_prompt (existing English tag list for ComfyUI)
 
-YOUR TASK: Rewrite each "scene_prompt" so it VISUALLY DEPICTS the exact action/character/object/location described in "narration_text".
+YOUR TASK: Rewrite each "scene_prompt" so it VISUALLY DEPICTS the exact action/character/object/location described in "narration_text", while MAXIMIZING horror/supernatural atmosphere.
 
-EXTRACTION RULES — read narration and extract these 4 elements:
+EXTRACTION RULES — read narration and extract these 5 elements:
 1. WHO: which character role is physically visible (use generic role tags: daoist figure, elder figure, young warrior, female figure, hooded figure — NEVER character names)
 2. ACTION: the specific physical action/pose being performed (must be concrete: "figure prying open stone lid", "figure slamming fist on table", "figure running through fog" — NOT "action pose", "performing ritual", "fighting")
 3. OBJECT/PROP: key objects mentioned in narration (coffin, dagger, talisman, candles, corpse, compass)
 4. LOCATION: specific place described in narration (abandoned temple courtyard, dark excavation pit, candlelit coffin shop interior)
+5. HORROR MOOD: choose 1-2 atmosphere tags that match the narration's tension level:
+   - Discovery/reveal: "eerie green glow emanating from below", "cold mist creeping along ground"
+   - Confrontation: "blood-red candlelight", "distorted shadows stretching on walls"
+   - Ritual/supernatural: "glowing ritual symbols on ground", "spirit wisps floating in air"
+   - Dread/suspense: "oppressive darkness pressing in", "pale ghostly luminescence from above"
 
 REWRITE RULES:
 - Start every prompt with: sfw, fully clothed, high collar, long sleeves,
-- Structure: sfw, fully clothed, high collar, long sleeves, [LOCATION with visual detail], [ACTION/POSE — must match narration action], [foreground object from narration], [background depth 2 elements], [specific lighting matching mood], anime style, manhua art style, no text, no watermarks
+- Structure: sfw, fully clothed, high collar, long sleeves, [LOCATION with visual detail], [ACTION/POSE — must match narration action], [foreground object from narration], [background depth 2 elements], [HORROR ATMOSPHERE lighting/mood], anime style, manhua art style, no text, no watermarks
 - ACTION tag MUST reflect what narration_text says is happening — not a standing portrait
+- HORROR ATMOSPHERE is MANDATORY: every prompt must have at least 1 eerie/dark/supernatural lighting or mood tag — NEVER use plain "bright daylight" or "warm sunlight" unless the narration explicitly describes a safe daytime scene
 - If narration says "prying open coffin lid" → scene_prompt must contain prying/opening action tags
 - If narration says "shouting accusation at someone" → scene_prompt must contain accusatory gesture tags
-- If narration describes discovery/reveal → scene_prompt must show discovery moment
+- If narration describes discovery/reveal → scene_prompt must show discovery moment with eerie reveal lighting
 - Keep comma-separated tags — NO English sentences, NO Vietnamese words
-- FORBIDDEN tags: "action pose", "dynamic pose", "performing ritual", "figure standing", "fight scene", "dramatic lighting", "detailed background", "mysterious aura"
+- FORBIDDEN tags: "action pose", "dynamic pose", "performing ritual", "figure standing", "fight scene", "dramatic lighting", "detailed background"
 - FORBIDDEN content: bare skin, exposed midriff, cleavage, tight clothing, suggestive poses
 
 Return a JSON ARRAY (same length as input, same order):
@@ -260,11 +283,22 @@ _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"la bàn", re.IGNORECASE), "feng shui compass"),
     (re.compile(r"xé( toạc)? áo|rách áo", re.IGNORECASE), "torn clothing"),
     (re.compile(r"vết cắn|dấu răng", re.IGNORECASE), "bite mark on shoulder"),
-    (re.compile(r"cười điên|cười man|cười điên loạn", re.IGNORECASE), "maniacal grin expression"),
-    (re.compile(r"gào|thét|\bkhóc\b", re.IGNORECASE), "screaming expression"),
+    (re.compile(r"cười điên|cười man|cười điên loạn|cười quỷ|cười dị|cười ác", re.IGNORECASE), "maniacal grin expression with wide unnatural smile"),
+    (re.compile(r"gào|thét|\bkhóc\b", re.IGNORECASE), "screaming expression with open mouth"),
     (re.compile(r"kiếm|đao trấn|long tuyền", re.IGNORECASE), "ornate daoist sword in hand"),
     (re.compile(r"thiên sư bài|bài thiên sư", re.IGNORECASE), "ritual celestial master badge in hand"),
     (re.compile(r"hồ lô|bầu hồ lô", re.IGNORECASE), "daoist gourd flask"),
+    # Horror/supernatural object tags
+    (re.compile(r"hồn|vong|linh hồn|oan hồn", re.IGNORECASE), "faint ghostly silhouette in shadow"),
+    (re.compile(r"máu|vết máu|đẫm máu", re.IGNORECASE), "dark blood stain on surface"),
+    (re.compile(r"xương|bộ xương|sọ người", re.IGNORECASE), "scattered bones on ground"),
+    (re.compile(r"thi thể|xác chết|\bxác\b|thây|tử thi|nữ tử thi", re.IGNORECASE), "pale lifeless corpse with rigid limbs"),
+    (re.compile(r"mộ|ngôi mộ|mồ", re.IGNORECASE), "ancient moss-covered grave mound"),
+    (re.compile(r"nến|đèn cầy", re.IGNORECASE), "dripping wax candle with flickering flame"),
+    (re.compile(r"trắng bệch|trắng nhợt|xanh xao|tái mét", re.IGNORECASE), "deathly pale white skin with blue-grey veins"),
+    (re.compile(r"trợn trừng|mắt mở to|mắt trợn", re.IGNORECASE), "wide staring dead eyes with dilated pupils"),
+    (re.compile(r"khí âm|âm khí|khí lạnh|hàn khí", re.IGNORECASE), "cold dark mist emanating from body"),
+    (re.compile(r"đứa trẻ|đứa bé|hài nhi|trẻ con", re.IGNORECASE), "small child body wrapped in cloth"),
 ]
 
 # Action/pose tags — inserted EARLY in scene_prompt and replace weak generic poses.
@@ -298,6 +332,21 @@ _SCENE_ALIGN_ACTION_RULES: list[tuple[re.Pattern[str], str]] = [
      "figure slicing red thread with knife in focused stance"),
     (re.compile(r"phát hiện ra|nhìn thấy lần đầu", re.IGNORECASE),
      "dramatic close-up reveal of discovered object in foreground"),
+    # Horror/supernatural action rules
+    (re.compile(r"bị nhập|nhập vào|chiếm hữu|nhập hồn", re.IGNORECASE),
+     "figure convulsing with head thrown back and arms rigid in supernatural possession"),
+    (re.compile(r"trừ tà|trừ quỷ|trục quỷ|bắt quỷ", re.IGNORECASE),
+     "figure thrusting talisman forward with outstretched arm in exorcism stance"),
+    (re.compile(r"run rẩy|rùng mình|sợ hãi|kinh hãi", re.IGNORECASE),
+     "figure recoiling in terror with wide eyes and raised defensive hands"),
+    (re.compile(r"hiện hình|hiện nguyên|biến mất|tan biến", re.IGNORECASE),
+     "translucent spectral form materializing from swirling dark mist"),
+    (re.compile(r"nắm chặt|ôm chặt|giữ chặt", re.IGNORECASE),
+     "figure clutching tightly with rigid white-knuckled hands"),
+    (re.compile(r"nhảy ra|bật dậy|ngồi bật|vùng dậy", re.IGNORECASE),
+     "figure lunging out of coffin with arms outstretched"),
+    (re.compile(r"cười quỷ|cười dị|cười ác|cười ma|nhe răng", re.IGNORECASE),
+     "figure with wide eerie grin showing teeth in unsettling expression"),
 ]
 
 # Generic pose tags that get REPLACED when a specific action rule fires.
@@ -313,6 +362,127 @@ _WEAK_POSE_TAGS: frozenset[str] = frozenset([
     "figure and ritual",
     "performing ritual",
 ])
+
+# Tags that are purely structural/style — skip when extracting environment anchors.
+_PROMPT_SKIP_TAGS: frozenset[str] = frozenset([
+    "sfw", "fully clothed", "high collar", "long sleeves", "covered body",
+    "modest clothing", "traditional attire", "armored", "formal wear",
+    "anime style", "manhua art style", "no text", "no watermarks",
+    "wide establishing shot", "full scene view", "environment focus",
+    "no characters in foreground",
+])
+
+# Location markers — used to identify the single "place" tag in a prompt.
+_LOCATION_MARKERS: tuple[str, ...] = (
+    "shop", "temple", "pit", "courtyard", "cave", "room", "forest",
+    "mountain", "street", "house", "inn", "tomb", "coffin", "village",
+    "shrine", "hall", "chamber", "corridor", "roof", "bridge", "cliff",
+    "staircase", "gate", "field", "alley", "market", "dock", "river", "lake",
+    "exterior", "interior", "ruins", "building", "camp", "altar", "path",
+    "clearing", "valley", "hill", "cemetery", "graveyard", "warehouse",
+)
+
+# Lighting markers — used to identify the single "light" tag in a prompt.
+_LIGHTING_MARKERS: tuple[str, ...] = (
+    "lamp", "lantern", "candle", "torch", "moonlight", "sunlight", "shadow",
+    "glow", "casting", "illumin", "flame", "fire", "light", "dawn", "dusk",
+    "noon", "dark", "dim", "bright", "haze", "mist", "fog",
+)
+
+
+def _extract_env_anchors(scene_prompt: str) -> tuple[str, str]:
+    """Extract (location_tag, lighting_tag) from a scene_prompt.
+
+    Returns the first tag that matches each category.
+    """
+    tags = [t.strip() for t in scene_prompt.split(",") if t.strip()]
+    location = ""
+    lighting = ""
+    for tag in tags:
+        lower = tag.lower()
+        if lower in _PROMPT_SKIP_TAGS:
+            continue
+        if not location and any(m in lower for m in _LOCATION_MARKERS):
+            location = tag
+        if not lighting and any(m in lower for m in _LIGHTING_MARKERS):
+            lighting = tag
+        if location and lighting:
+            break
+    return location, lighting
+
+
+def _enforce_scene_continuity(
+    shots: List[ShotScript],
+    episode_num: int,
+) -> List[ShotScript]:
+    """For each scene_id group, propagate the FIRST shot's location+lighting tags
+    to all subsequent shots in the same group.
+
+    This is purely deterministic — no LLM involvement. It runs AFTER the LLM
+    rewrite pass so the base content is already action-aligned. It only touches
+    the location and lighting tags.
+    """
+    if not any(s.scene_id for s in shots):
+        # LLM didn't assign any scene_ids — skip silently.
+        logger.debug("No scene_ids assigned by LLM — skipping continuity pass | episode={}", episode_num)
+        return shots
+
+    # Build anchor map: scene_id → (location_tag, lighting_tag) from first shot.
+    anchor_map: dict[str, tuple[str, str]] = {}
+    for shot in shots:
+        sid = (shot.scene_id or "").strip()
+        if sid and sid not in anchor_map:
+            loc, light = _extract_env_anchors(shot.scene_prompt)
+            if loc or light:
+                anchor_map[sid] = (loc, light)
+
+    result = list(shots)
+    fixed = 0
+    for i, shot in enumerate(result):
+        sid = (shot.scene_id or "").strip()
+        if not sid or sid not in anchor_map:
+            continue
+
+        canon_loc, canon_light = anchor_map[sid]
+        curr_loc, curr_light = _extract_env_anchors(shot.scene_prompt)
+
+        loc_ok = not canon_loc or canon_loc.lower() == curr_loc.lower()
+        light_ok = not canon_light or canon_light.lower() == curr_light.lower()
+        if loc_ok and light_ok:
+            continue  # Already consistent.
+
+        # Rebuild: safety prefix → canon anchors → body (minus old anchors).
+        tags = [t.strip() for t in shot.scene_prompt.split(",") if t.strip()]
+        prefix = [t for t in tags if t.lower() in _PROMPT_SKIP_TAGS]
+        body = [t for t in tags if t.lower() not in _PROMPT_SKIP_TAGS]
+
+        # Drop stale location/lighting from body.
+        if not loc_ok and curr_loc:
+            body = [t for t in body if t.lower() != curr_loc.lower()]
+        if not light_ok and curr_light:
+            body = [t for t in body if t.lower() != curr_light.lower()]
+
+        # Inject canon anchors at the front of body (right after safety prefix).
+        injected: list[str] = []
+        if not loc_ok and canon_loc:
+            injected.append(canon_loc)
+        if not light_ok and canon_light:
+            injected.append(canon_light)
+
+        new_prompt = ", ".join(prefix + injected + body)
+        result[i] = shot.model_copy(update={"scene_prompt": new_prompt})
+        fixed += 1
+        logger.debug(
+            "scene_id continuity fix | episode={} shot={} scene_id={} loc={!r} light={!r}",
+            episode_num, i, sid, canon_loc, canon_light,
+        )
+
+    if fixed:
+        logger.info(
+            "Scene continuity enforced | episode={} fixed={}/{} shots",
+            episode_num, fixed, len(shots),
+        )
+    return result
 
 
 def _rewrite_scene_prompts_from_narration(
@@ -533,6 +703,8 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _rewrite_scene_prompts_from_narration(episode_shots, episode_num)
     # Rule-based layer: inject specific artifact/object tags that LLM might miss
     episode_shots = _align_scene_prompt_with_narration(episode_shots, episode_num)
+    # Deterministic continuity: enforce shared location+lighting within each scene_id group
+    episode_shots = _enforce_scene_continuity(episode_shots, episode_num)
 
     script = EpisodeScript(
         episode_num=episode_num,
@@ -751,23 +923,50 @@ def _align_scene_prompt_with_narration(
             updated.append(shot)
             continue
 
+        # Find the style suffix boundary — everything after "anime style" is
+        # tail content that CLIP largely ignores.  We must insert horror tags
+        # BEFORE this boundary so they land in the high-attention zone.
+        style_idx = len(scene_tags)
+        for idx, t in enumerate(scene_tags):
+            if "anime style" in t.lower():
+                style_idx = idx
+                break
+
         if action_tags:
             # Remove weak/generic pose tags that the specific action makes redundant.
             scene_tags = [
                 t for t in scene_tags
                 if t.lower() not in _WEAK_POSE_TAGS
             ]
-            # Insert action tags after the first 3 positional tags (sfw/clothed + location).
-            insert_at = min(3, max(0, len(scene_tags) - 1))
+            # Recalculate style_idx after removal.
+            style_idx = len(scene_tags)
+            for idx, t in enumerate(scene_tags):
+                if "anime style" in t.lower():
+                    style_idx = idx
+                    break
+            # Insert action tags at position 3 (after sfw/clothed + location).
+            # Weight them at 1.3 so CLIP gives strong attention to the specific action.
+            insert_at = min(3, max(0, style_idx - 1))
             for i, tag in enumerate(action_tags[:2]):
-                scene_tags.insert(insert_at + i, tag)
+                scene_tags.insert(insert_at + i, f"({tag}:1.3)")
+                style_idx += 1  # shift style boundary
 
-        # Append object tags at the end (max 3, deduplicated).
+        # Insert object tags with weight 1.2 BEFORE the style suffix.
+        # These are the key visual props (coffin, corpse, talisman, etc.)
+        # that must be in CLIP's high-attention zone.
         scene_lower_now = {t.lower() for t in scene_tags}
-        for tag in object_tags[:3]:
+        # Recalculate style_idx one more time for safety.
+        style_idx = len(scene_tags)
+        for idx, t in enumerate(scene_tags):
+            if "anime style" in t.lower():
+                style_idx = idx
+                break
+        obj_inserted = 0
+        for tag in object_tags[:6]:
             if tag.lower() not in scene_lower_now:
-                scene_tags.append(tag)
+                scene_tags.insert(style_idx + obj_inserted, f"({tag}:1.2)")
                 scene_lower_now.add(tag.lower())
+                obj_inserted += 1
 
         updated.append(shot.model_copy(update={"scene_prompt": ", ".join(scene_tags)}))
         aligned += 1

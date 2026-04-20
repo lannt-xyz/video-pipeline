@@ -157,12 +157,21 @@ _CLOTHING_KEYWORDS = frozenset([
 
 
 _SCENE_DETAIL_BOOST_TAGS = (
-    "intricate foreground props",
-    "clear midground subject separation",
-    "deep layered background",
     "cinematic volumetric lighting",
-    "expansive environment storytelling",
-    "atmospheric depth haze",
+    "eerie unsettling atmosphere",
+    "ominous shadows creeping",
+    "dark foreboding tone",
+)
+
+# Framing tags injected into scene-only (no-character) prompts to prevent
+# SDXL defaulting to portrait/close-up framing on a 9:16 canvas.
+_SCENE_FRAMING_TAGS = "wide establishing shot, full scene view, environment focus, no characters in foreground"
+
+# Negative tags that block portrait/close-up framing in scene-only shots.
+_SCENE_ANTI_PORTRAIT_NEG = (
+    ", (portrait:1.6), (close-up:1.6), (face focus:1.5), (headshot:1.5), "
+    "(bust shot:1.4), (upper body focus:1.4), (extreme close up:1.6), "
+    "(face close up:1.6), (zoomed in face:1.5), talking head"
 )
 
 _HOLDING_CONTEXT_KEYWORDS = frozenset([
@@ -193,13 +202,22 @@ _ARTIFACT_MATERIAL_HINTS = [
 
 
 def _enhance_scene_detail_tags(prompt_text: str) -> str:
-    """Append small, stable detail tags so scene prompts are consistently richer."""
+    """Insert small, stable detail tags BEFORE style suffix for better CLIP attention."""
     base = prompt_text.strip()
     lower = base.lower()
     extra = [t for t in _SCENE_DETAIL_BOOST_TAGS if t not in lower]
     if not extra:
         return base
-    return ", ".join([p for p in [base, *extra] if p])
+    tags = [t.strip() for t in base.split(",") if t.strip()]
+    # Find style suffix boundary — boost tags must go BEFORE it.
+    style_idx = len(tags)
+    for idx, t in enumerate(tags):
+        if "anime style" in t.lower():
+            style_idx = idx
+            break
+    for i, etag in enumerate(extra):
+        tags.insert(style_idx + i, etag)
+    return ", ".join(tags)
 
 
 def _compact_prompt_tags(tag_text: str, max_tags: int = 12) -> str:
@@ -302,7 +320,7 @@ def _load_character_artifact_hints() -> dict[str, list[str]]:
         char_cols = {
             r[1] for r in con.execute("PRAGMA table_info(wiki_characters)").fetchall()
         }
-        char_filter = " WHERE c.is_delete = 0" if "is_delete" in char_cols else ""
+        char_filter = " WHERE c.is_deleted = 0" if "is_deleted" in char_cols else ""
 
         rows = con.execute(
             "SELECT c.name AS char_name, a.name AS artifact_name, "
@@ -406,7 +424,7 @@ _NEGATIVE_BASE = (
     "(tail:1.3), (claws:1.3), (fangs:1.3), demon, beast, creature, "
     # Dangerous soft tags that PonyXL associates with NSFW
     "alluring, seductive, suggestive, provocative, erotic, sensual, "
-    "mysterious aura, bedroom eyes, revealing outfit, "
+    "bedroom eyes, revealing outfit, "
     # PonyDiffusion quality anti-tags
     "score_1, score_2, score_3, score_4, score_5, "
     # Text / watermark — prevents manga SFX, speech bubbles, captions
@@ -460,11 +478,15 @@ def _generate_scene_fallback(
     output_path: Path,
 ) -> None:
     """Fallback: generate shot with txt2img_scene (no IPAdapter)."""
+    # Prepend framing tags when not already present to prevent portrait bias.
+    fallback_prompt = prompt_text
+    if "wide establishing shot" not in prompt_text.lower():
+        fallback_prompt = f"{_SCENE_FRAMING_TAGS}, {prompt_text}"
     comfyui_client.generate_image(
         "image_gen/workflows/txt2img_scene.json",
         {
-            "SCENE_PROMPT": prompt_text,
-            "NEGATIVE_PROMPT": _NEGATIVE_BASE,
+            "SCENE_PROMPT": fallback_prompt,
+            "NEGATIVE_PROMPT": _NEGATIVE_BASE + _SCENE_ANTI_PORTRAIT_NEG,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
             "SEED": seed,
@@ -544,10 +566,11 @@ def _build_shot_image_params(
             _character_identity_hint(char_obj)
             for char_obj, _ in char_anchor_pairs[:2]
         ]
+        # Scene context FIRST — environment must dominate over character counts.
         scene_prompt = ", ".join(
-            [p for p in [count_tag, detailed_scene, artifact_detail_tags, *identity_hints] if p]
+            [p for p in [detailed_scene, artifact_detail_tags, count_tag, *identity_hints] if p]
         )
-        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=16)
+        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=22)
         workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
         replacements = {
             # Dual-char: IPAdapter anchors carry both visual identities;
@@ -567,15 +590,15 @@ def _build_shot_image_params(
         dna_text = _extract_dna_tags(char_obj.description) if char_obj else ""
         # Inject clothing tags with weight 1.2 to lock outfit matching anchor
         clothing_text = _extract_clothing_tags(char_obj.description) if char_obj else ""
-        # Identity-first for single-character shots to avoid face blur/deformation.
-        # Put scene context early and with stronger weight so landscape persists.
-        weighted_scene = f"({detailed_scene}:1.2)" if detailed_scene else ""
+        # Scene context FIRST — environment/action tags take priority over character identity.
+        # Character identity (DNA/clothing) comes after so IPAdapter handles face, not prompt.
+        weighted_scene = f"({detailed_scene}:1.1)" if detailed_scene else ""
         parts = [
-            p for p in [gender_tag, "solo", weighted_scene, artifact_detail_tags, clothing_text, dna_text]
+            p for p in [weighted_scene, artifact_detail_tags, gender_tag, "solo", clothing_text, dna_text]
             if p
         ]
         scene_prompt = ", ".join(parts)
-        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=16)
+        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=22)
         workflow = "image_gen/workflows/txt2img_ipadapter.json"
         replacements = {
             "SCENE_PROMPT": scene_prompt,
@@ -592,14 +615,16 @@ def _build_shot_image_params(
             replacements["ANCHOR_PATH_3"] = anchors[2]
     else:
         workflow = "image_gen/workflows/txt2img_scene.json"
+        scene_prompt_parts = [p for p in [detailed_scene, artifact_detail_tags] if p]
+        # Prepend framing tags so SDXL establishes a wide shot instead of portrait.
+        if _SCENE_FRAMING_TAGS not in (scene_prompt_parts[0] if scene_prompt_parts else ""):
+            scene_prompt_parts.insert(0, _SCENE_FRAMING_TAGS)
         replacements = {
             "SCENE_PROMPT": _compact_prompt_tags(
-                ", ".join(
-                [p for p in [detailed_scene, artifact_detail_tags] if p]
-                ),
-                max_tags=14,
+                ", ".join(scene_prompt_parts),
+                max_tags=24,
             ),
-            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE,
+            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE + _SCENE_ANTI_PORTRAIT_NEG,
             "WIDTH": settings.image_width,
             "HEIGHT": settings.image_height,
             "SEED": seed,
@@ -665,7 +690,11 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             # Use frame.scene_prompt (with camera_tag prepended) if available,
             # otherwise fall back to shot.scene_prompt
             prompt_text = frame.scene_prompt if frame else shot.scene_prompt
-            seed = episode_num * 10000 + idx * 100 + fidx
+            # All frames in the SAME shot share the SAME seed so SDXL
+            # produces consistent composition (objects, lighting, poses).
+            # The camera_tag difference at prompt position 0 is enough to
+            # create the zoom / pan progression across frames.
+            seed = episode_num * 10000 + idx * 100
 
             workflow, replacements = _build_shot_image_params(
                 prompt_text, char_anchor_pairs, seed, artifact_hints_by_name

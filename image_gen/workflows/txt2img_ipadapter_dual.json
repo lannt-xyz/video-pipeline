@@ -79,8 +79,8 @@
         1
       ],
       "lora_name": "dark_horror_atmosphere.safetensors",
-      "strength_model": 0.4,
-      "strength_clip": 0.4
+      "strength_model": 0.6,
+      "strength_clip": 0.6
     }
   },
   "6": {
@@ -144,11 +144,11 @@
         "15",
         0
       ],
-      "weight": 0.45,
+      "weight": 0.25,
       "weight_type": "ease in-out",
       "combine_embeds": "average",
       "start_at": 0.0,
-      "end_at": 0.65,
+      "end_at": 0.4,
       "embeds_scaling": "K+V w/ C penalty"
     }
   },
@@ -167,18 +167,18 @@
         "19",
         0
       ],
-      "weight": 0.45,
+      "weight": 0.25,
       "weight_type": "ease in-out",
       "combine_embeds": "average",
       "start_at": 0.0,
-      "end_at": 0.65,
+      "end_at": 0.4,
       "embeds_scaling": "K+V w/ C penalty"
     }
   },
   "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, masterpiece, best quality, highly detailed",
+      "text": "__SCENE_PROMPT__, masterpiece, best quality, highly detailed, dark atmosphere, eerie mood",
       "clip": [
         "5",
         1
