@@ -374,7 +374,7 @@ class TestScriptwriter:
 
         shots = [
             ShotScript(
-                scene_prompt="sfw, fully clothed, muddy cemetery at night, figure performing ritual, ancient stone gateway in background, cold moonlight, anime style, manhua art style, no text, no watermarks",
+                scene_prompt="muddy cemetery at night, figure performing ritual, ancient stone gateway in background, cold moonlight",
                 narration_text="Anh dùng xẻng khai quật phần mộ, phát hiện ra một quan tài màu đỏ tươi.",
                 duration_sec=6,
             )
@@ -389,17 +389,13 @@ class TestScriptwriter:
         assert "figure performing ritual" not in prompt
         # Object tag (coffin) should also be appended
         assert "red lacquered coffin" in prompt
-        # Action tag must appear before "anime style" footer
-        action_idx = prompt.index("figure crouching")
-        style_idx = prompt.index("anime style")
-        assert action_idx < style_idx
 
     def test_align_action_tag_inserted_before_background_not_at_end(self):
         from llm.scriptwriter import _align_scene_prompt_with_narration
 
         shots = [
             ShotScript(
-                scene_prompt="sfw, fully clothed, wooden hall interior, figure standing, wooden pillars in background, warm lantern light, anime style, manhua art style",
+                scene_prompt="wooden hall interior, figure standing, wooden pillars in background, warm lantern light",
                 narration_text="Thanh Vân Tử chỉ thẳng vào Diệp Đại Bảo buộc tội hắn trước mặt mọi người.",
                 duration_sec=6,
             )

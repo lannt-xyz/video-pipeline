@@ -109,18 +109,17 @@ FORBIDDEN in scene_prompt:
 - Generic placeholder tags: "dramatic lighting", "detailed background", "action pose", "fight scene" — be SPECIFIC
 - Extreme close-up framing tags: "extreme close-up", "extreme close-up detail", "face close-up", "macro shot" — these erase background context entirely. Use "medium close-up", "medium shot", or "wide shot" instead
 
-CLOTHING SAFETY RULE — CRITICAL for all scene_prompt:
-- Every scene_prompt with a human figure MUST include at least 2 of: fully clothed, high collar, long sleeves, covered body, modest clothing, traditional attire, armored, formal wear.
-- NEVER use tags that expose skin: bare shoulders, bare midriff, open shirt, low cut, tight clothing.
-- Prepend every scene_prompt with: "sfw, fully clothed, "
+CLOTHING SAFETY:
+- FORBIDDEN: bare skin, exposed midriff, cleavage, tight clothing, suggestive poses.
+- Do NOT add clothing/style/safety tags (e.g., sfw, fully clothed, anime style, no watermarks) — they are injected automatically downstream.
 
-REQUIRED in scene_prompt:
+REQUIRED in scene_prompt — USE ALL TAG POSITIONS FOR ACTUAL CONTENT:
 - At least 1 specific LOCATION tag with visual detail
 - At least 1 specific ACTION or POSE tag with object/weapon/gesture
 - At least 1 foreground element (close to camera)
 - At least 1 background element (depth/environment)
 - At least 1 specific lighting description
-- End ALWAYS with: "anime style, manhua art style, no text, no watermarks"
+- Do NOT include "anime style", "manhua art style", "no text", "no watermarks", "sfw", "fully clothed" — these are added automatically
 
 OTHER RULES:
 - duration_sec: 2 or 3 for shots 1–2; 6 for standard shots, 8 for climactic action shots.
@@ -257,8 +256,8 @@ EXTRACTION RULES — read narration and extract these 5 elements:
    - Dread/suspense: "oppressive darkness pressing in", "pale ghostly luminescence from above"
 
 REWRITE RULES:
-- Start every prompt with: sfw, fully clothed, high collar, long sleeves,
-- Structure: sfw, fully clothed, high collar, long sleeves, [LOCATION with visual detail], [ACTION/POSE — must match narration action], [foreground object from narration], [background depth 2 elements], [HORROR ATMOSPHERE lighting/mood], anime style, manhua art style, no text, no watermarks
+- Structure: [LOCATION with visual detail], [ACTION/POSE — must match narration action], [foreground object from narration], [background depth 2 elements], [HORROR ATMOSPHERE lighting/mood]
+- Do NOT add style/safety metadata tags (sfw, fully clothed, anime style, manhua art style, no text, no watermarks) — they are injected automatically downstream. Use ALL tag positions for visual content.
 - ACTION tag MUST reflect what narration_text says is happening — not a standing portrait
 - HORROR ATMOSPHERE is MANDATORY: every prompt must have at least 1 eerie/dark/supernatural lighting or mood tag — NEVER use plain "bright daylight" or "warm sunlight" unless the narration explicitly describes a safe daytime scene
 - If narration says "prying open coffin lid" → scene_prompt must contain prying/opening action tags
@@ -896,9 +895,8 @@ def _align_scene_prompt_with_narration(
     """Inject missing visual tags into scene_prompt based on narration_text.
 
     Two-tier pass:
-    1. ACTION rules — insert early (after position 3) + remove weak generic pose tags.
-       These ensure ComfyUI draws the actual physical action, not a standing portrait.
-    2. OBJECT rules — append at the end as prop/artifact hints (existing behavior).
+    1. ACTION rules — insert at position 2 (right after location).
+    2. OBJECT rules — append at end (all positions are content now, no metadata suffix).
     """
     aligned = 0
     updated: List[ShotScript] = []
@@ -923,50 +921,23 @@ def _align_scene_prompt_with_narration(
             updated.append(shot)
             continue
 
-        # Find the style suffix boundary — everything after "anime style" is
-        # tail content that CLIP largely ignores.  We must insert horror tags
-        # BEFORE this boundary so they land in the high-attention zone.
-        style_idx = len(scene_tags)
-        for idx, t in enumerate(scene_tags):
-            if "anime style" in t.lower():
-                style_idx = idx
-                break
-
         if action_tags:
             # Remove weak/generic pose tags that the specific action makes redundant.
             scene_tags = [
                 t for t in scene_tags
                 if t.lower() not in _WEAK_POSE_TAGS
             ]
-            # Recalculate style_idx after removal.
-            style_idx = len(scene_tags)
-            for idx, t in enumerate(scene_tags):
-                if "anime style" in t.lower():
-                    style_idx = idx
-                    break
-            # Insert action tags at position 3 (after sfw/clothed + location).
-            # Weight them at 1.3 so CLIP gives strong attention to the specific action.
-            insert_at = min(3, max(0, style_idx - 1))
+            # Insert action tags at position 2 (after location tag).
+            insert_at = min(2, len(scene_tags))
             for i, tag in enumerate(action_tags[:2]):
                 scene_tags.insert(insert_at + i, f"({tag}:1.3)")
-                style_idx += 1  # shift style boundary
 
-        # Insert object tags with weight 1.2 BEFORE the style suffix.
-        # These are the key visual props (coffin, corpse, talisman, etc.)
-        # that must be in CLIP's high-attention zone.
+        # Append object tags at end — no metadata suffix to worry about anymore.
         scene_lower_now = {t.lower() for t in scene_tags}
-        # Recalculate style_idx one more time for safety.
-        style_idx = len(scene_tags)
-        for idx, t in enumerate(scene_tags):
-            if "anime style" in t.lower():
-                style_idx = idx
-                break
-        obj_inserted = 0
         for tag in object_tags[:6]:
             if tag.lower() not in scene_lower_now:
-                scene_tags.insert(style_idx + obj_inserted, f"({tag}:1.2)")
+                scene_tags.append(f"({tag}:1.2)")
                 scene_lower_now.add(tag.lower())
-                obj_inserted += 1
 
         updated.append(shot.model_copy(update={"scene_prompt": ", ".join(scene_tags)}))
         aligned += 1

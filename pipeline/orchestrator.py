@@ -163,6 +163,22 @@ _SCENE_DETAIL_BOOST_TAGS = (
     "dark foreboding tone",
 )
 
+# Tags that belong in the workflow CLIP suffix, not in SCENE_PROMPT.
+# Strip them from LLM output to avoid wasting tag positions.
+_METADATA_STRIP_TAGS = frozenset([
+    "sfw", "fully clothed", "high collar", "long sleeves",
+    "anime style", "manhua art style", "no text", "no watermarks",
+    "masterpiece", "best quality", "highly detailed",
+    *_SCENE_DETAIL_BOOST_TAGS,
+])
+
+
+def _strip_metadata_tags(prompt_text: str) -> str:
+    """Remove metadata/style tags that now live in the workflow CLIP suffix."""
+    tags = [t.strip() for t in prompt_text.split(",") if t.strip()]
+    cleaned = [t for t in tags if t.lower() not in _METADATA_STRIP_TAGS]
+    return ", ".join(cleaned)
+
 # Framing tags injected into scene-only (no-character) prompts to prevent
 # SDXL defaulting to portrait/close-up framing on a 9:16 canvas.
 _SCENE_FRAMING_TAGS = "wide establishing shot, full scene view, environment focus, no characters in foreground"
@@ -525,8 +541,9 @@ def _build_shot_image_params(
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
-    Uses _NEGATIVE_BASE with optional female-anatomy block.
-    Injects DNA tags into single-character prompts to reinforce IPAdapter.
+    SCENE_PROMPT contains ONLY visual content (location, action, objects, mood).
+    Metadata tags (sfw, anime style, etc.) live in the workflow CLIP suffix.
+    Character identity is handled by IPAdapter anchors — not text prompt.
     """
     has_female = any(c is not None and c.gender == "female" for c, _ in char_anchor_pairs)
     negative_base = (
@@ -539,18 +556,8 @@ def _build_shot_image_params(
     _ANTI_SPLIT_DUAL = ", (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5), (4girls:1.5), (4boys:1.5)"
     _ANTI_SPLIT_SINGLE = ", (2girls:1.5), (2boys:1.5), (multiple girls:1.5), (multiple boys:1.5), (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5)"
 
-    def _character_identity_hint(char_obj) -> str:
-        if not char_obj:
-            return ""
-        dna_text = _extract_dna_tags(char_obj.description)
-        clothing_text = _extract_clothing_tags(char_obj.description)
-        parts = [p for p in [clothing_text, dna_text] if p]
-        if not parts:
-            return ""
-        # Keep identity stable but avoid overpowering environment context.
-        return f"({', '.join(parts)}:1.05)"
-
-    detailed_scene = _enhance_scene_detail_tags(prompt_text)
+    # Strip leftover metadata tags that LLM might still include (from cached scripts).
+    scene_text = _strip_metadata_tags(prompt_text)
     artifact_detail_tags = _build_artifact_prompt_tags(
         prompt_text, char_anchor_pairs, artifact_hints_by_name
     )
@@ -562,19 +569,13 @@ def _build_shot_image_params(
             else "2girls" if all(g == "female" for g in genders)
             else "1boy, 1girl"
         )
-        identity_hints = [
-            _character_identity_hint(char_obj)
-            for char_obj, _ in char_anchor_pairs[:2]
-        ]
-        # Scene context FIRST — environment must dominate over character counts.
+        # Scene content + gender count only. No clothing/DNA — IPAdapter handles identity.
         scene_prompt = ", ".join(
-            [p for p in [detailed_scene, artifact_detail_tags, count_tag, *identity_hints] if p]
+            [p for p in [scene_text, artifact_detail_tags, count_tag] if p]
         )
         scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=22)
         workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
         replacements = {
-            # Dual-char: IPAdapter anchors carry both visual identities;
-            # add low-weight identity hints from profile to reinforce each anchor.
             "SCENE_PROMPT": scene_prompt,
             "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_DUAL,
             "WIDTH": settings.image_width,
@@ -586,15 +587,9 @@ def _build_shot_image_params(
     elif len(char_anchor_pairs) == 1:
         char_obj, anchors = char_anchor_pairs[0]
         gender_tag = "1girl" if (char_obj and char_obj.gender == "female") else "1boy"
-        # Inject DNA tags (hair/eyes/face/body) to reinforce IPAdapter face match
-        dna_text = _extract_dna_tags(char_obj.description) if char_obj else ""
-        # Inject clothing tags with weight 1.2 to lock outfit matching anchor
-        clothing_text = _extract_clothing_tags(char_obj.description) if char_obj else ""
-        # Scene context FIRST — environment/action tags take priority over character identity.
-        # Character identity (DNA/clothing) comes after so IPAdapter handles face, not prompt.
-        weighted_scene = f"({detailed_scene}:1.1)" if detailed_scene else ""
+        # Scene content + gender tag only. IPAdapter handles face/clothing identity.
         parts = [
-            p for p in [weighted_scene, artifact_detail_tags, gender_tag, "solo", clothing_text, dna_text]
+            p for p in [scene_text, artifact_detail_tags, gender_tag, "solo"]
             if p
         ]
         scene_prompt = ", ".join(parts)
@@ -615,7 +610,7 @@ def _build_shot_image_params(
             replacements["ANCHOR_PATH_3"] = anchors[2]
     else:
         workflow = "image_gen/workflows/txt2img_scene.json"
-        scene_prompt_parts = [p for p in [detailed_scene, artifact_detail_tags] if p]
+        scene_prompt_parts = [p for p in [scene_text, artifact_detail_tags] if p]
         # Prepend framing tags so SDXL establishes a wide shot instead of portrait.
         if _SCENE_FRAMING_TAGS not in (scene_prompt_parts[0] if scene_prompt_parts else ""):
             scene_prompt_parts.insert(0, _SCENE_FRAMING_TAGS)

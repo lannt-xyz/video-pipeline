@@ -178,7 +178,7 @@
   "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, masterpiece, best quality, highly detailed, dark atmosphere, eerie mood",
+      "text": "__SCENE_PROMPT__, sfw, fully clothed, high collar, long sleeves, anime style, manhua art style, cinematic volumetric lighting, eerie unsettling atmosphere, masterpiece, best quality, highly detailed, dark atmosphere, eerie mood, no text, no watermarks",
       "clip": [
         "5",
         1

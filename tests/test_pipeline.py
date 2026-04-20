@@ -275,7 +275,7 @@ class TestImagePromptEnrichment:
         compacted = _compact_prompt_tags(text, max_tags=4)
         assert compacted == "a, b, c, d"
 
-    def test_single_character_prompt_is_identity_first(self):
+    def test_single_character_prompt_has_scene_first_identity_after(self):
         from pipeline.orchestrator import _build_shot_image_params
         from models.schemas import Character
 
@@ -292,7 +292,10 @@ class TestImagePromptEnrichment:
         )
 
         prompt = replacements["SCENE_PROMPT"]
-        assert prompt.startswith("1boy, solo")
+        # Scene content comes first, identity tags (gender) come after
+        assert prompt.startswith("ruined shrine interior")
+        assert "1boy" in prompt
+        assert "solo" in prompt
 
 
 class TestThumbnailPrompt:
