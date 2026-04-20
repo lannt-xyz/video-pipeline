@@ -246,13 +246,22 @@ class ComfyUIClient:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+        # Workflow-only file — drag & drop directly into ComfyUI browser UI.
+        workflow_only_file = debug_dir / f"{debug_name}_workflow_only.json"
+        workflow_only_file.write_text(
+            json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
         unique_suffix = uuid.uuid4().hex[:8]
         ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
         history_file = debug_dir / f"{debug_name}_{ts}_{unique_suffix}.json"
         history_file.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        logger.debug("ComfyUI prompt saved | latest={} history={}", latest_file, history_file)
+        logger.debug(
+            "ComfyUI prompt saved | latest={} workflow_only={} history={}",
+            latest_file, workflow_only_file, history_file,
+        )
 
     def _load_workflow(self, workflow_path: str, replacements: dict) -> dict:
         """Load workflow JSON and replace __KEY__ placeholders.

@@ -369,6 +369,48 @@ class TestScriptwriter:
         assert "red umbrella" in out[0].scene_prompt
         assert "burning incense sticks" in out[0].scene_prompt
 
+    def test_align_injects_action_tag_early_and_removes_weak_pose(self):
+        from llm.scriptwriter import _align_scene_prompt_with_narration
+
+        shots = [
+            ShotScript(
+                scene_prompt="sfw, fully clothed, muddy cemetery at night, figure performing ritual, ancient stone gateway in background, cold moonlight, anime style, manhua art style, no text, no watermarks",
+                narration_text="Anh dùng xẻng khai quật phần mộ, phát hiện ra một quan tài màu đỏ tươi.",
+                duration_sec=6,
+            )
+        ]
+
+        out = _align_scene_prompt_with_narration(shots, episode_num=1)
+        prompt = out[0].scene_prompt
+
+        # Action tag must be present and come BEFORE the background tags
+        assert "figure crouching and digging with long-handled shovel" in prompt
+        # Weak generic pose tag must be replaced
+        assert "figure performing ritual" not in prompt
+        # Object tag (coffin) should also be appended
+        assert "red lacquered coffin" in prompt
+        # Action tag must appear before "anime style" footer
+        action_idx = prompt.index("figure crouching")
+        style_idx = prompt.index("anime style")
+        assert action_idx < style_idx
+
+    def test_align_action_tag_inserted_before_background_not_at_end(self):
+        from llm.scriptwriter import _align_scene_prompt_with_narration
+
+        shots = [
+            ShotScript(
+                scene_prompt="sfw, fully clothed, wooden hall interior, figure standing, wooden pillars in background, warm lantern light, anime style, manhua art style",
+                narration_text="Thanh Vân Tử chỉ thẳng vào Diệp Đại Bảo buộc tội hắn trước mặt mọi người.",
+                duration_sec=6,
+            )
+        ]
+
+        out = _align_scene_prompt_with_narration(shots, episode_num=1)
+        prompt = out[0].scene_prompt
+
+        assert "figure pointing accusingly" in prompt
+        assert "figure standing" not in prompt  # weak pose replaced
+
     def test_build_characters_ref_skips_unresolved_id_like_tokens(self):
         from llm.scriptwriter import _build_characters_ref
 

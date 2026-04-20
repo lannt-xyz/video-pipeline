@@ -216,20 +216,168 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
 
 _MAX_SHOTS_PER_EPISODE = 8  # shots that fit in one video; excess flows to next episode
 _ID_LIKE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
-_SCENE_ALIGN_RULES: list[tuple[re.Pattern[str], str]] = [
+
+# --------------------------------------------------------------------------- #
+#  Narration-to-scene-prompt alignment (LLM rewrite pass)                     #
+# --------------------------------------------------------------------------- #
+_NARRATION_ALIGN_SYSTEM = """You are a ComfyUI Stable Diffusion prompt engineer.
+You receive a list of video shot objects. Each shot has:
+  - shot_index (int)
+  - narration_text (Vietnamese sentence — what the narrator says)
+  - scene_prompt (existing English tag list for ComfyUI)
+
+YOUR TASK: Rewrite each "scene_prompt" so it VISUALLY DEPICTS the exact action/character/object/location described in "narration_text".
+
+EXTRACTION RULES — read narration and extract these 4 elements:
+1. WHO: which character role is physically visible (use generic role tags: daoist figure, elder figure, young warrior, female figure, hooded figure — NEVER character names)
+2. ACTION: the specific physical action/pose being performed (must be concrete: "figure prying open stone lid", "figure slamming fist on table", "figure running through fog" — NOT "action pose", "performing ritual", "fighting")
+3. OBJECT/PROP: key objects mentioned in narration (coffin, dagger, talisman, candles, corpse, compass)
+4. LOCATION: specific place described in narration (abandoned temple courtyard, dark excavation pit, candlelit coffin shop interior)
+
+REWRITE RULES:
+- Start every prompt with: sfw, fully clothed, high collar, long sleeves,
+- Structure: sfw, fully clothed, high collar, long sleeves, [LOCATION with visual detail], [ACTION/POSE — must match narration action], [foreground object from narration], [background depth 2 elements], [specific lighting matching mood], anime style, manhua art style, no text, no watermarks
+- ACTION tag MUST reflect what narration_text says is happening — not a standing portrait
+- If narration says "prying open coffin lid" → scene_prompt must contain prying/opening action tags
+- If narration says "shouting accusation at someone" → scene_prompt must contain accusatory gesture tags
+- If narration describes discovery/reveal → scene_prompt must show discovery moment
+- Keep comma-separated tags — NO English sentences, NO Vietnamese words
+- FORBIDDEN tags: "action pose", "dynamic pose", "performing ritual", "figure standing", "fight scene", "dramatic lighting", "detailed background", "mysterious aura"
+- FORBIDDEN content: bare skin, exposed midriff, cleavage, tight clothing, suggestive poses
+
+Return a JSON ARRAY (same length as input, same order):
+[{"shot_index": 0, "scene_prompt": "rewritten tags..."}, ...]
+CRITICAL: Return ONLY the JSON array, no markdown, no explanation."""
+# Object tags — appended at the END of scene_prompt (noun/prop hints).
+_SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(dù|ô)\b", re.IGNORECASE), "red umbrella"),
     (re.compile(r"\b(nhang|hương)\b", re.IGNORECASE), "burning incense sticks"),
     (re.compile(r"quan tài|nắp quan", re.IGNORECASE), "red lacquered coffin"),
-    (re.compile(r"dao găm|dao", re.IGNORECASE), "dagger in hand"),
+    (re.compile(r"dao găm|\bdao\b", re.IGNORECASE), "dagger in hand"),
     (re.compile(r"\bđinh\b", re.IGNORECASE), "rusted coffin nails"),
     (re.compile(r"chậu đồng", re.IGNORECASE), "bronze ritual basin"),
-    (re.compile(r"bùa|phù|chu sa", re.IGNORECASE), "yellow talisman paper"),
+    (re.compile(r"bùa|\bphù\b|chu sa", re.IGNORECASE), "yellow talisman paper"),
     (re.compile(r"la bàn", re.IGNORECASE), "feng shui compass"),
     (re.compile(r"xé( toạc)? áo|rách áo", re.IGNORECASE), "torn clothing"),
     (re.compile(r"vết cắn|dấu răng", re.IGNORECASE), "bite mark on shoulder"),
-    (re.compile(r"co giật|ngã xuống|sụp", re.IGNORECASE), "body collapsing violently"),
-    (re.compile(r"gào|thét|khóc", re.IGNORECASE), "screaming expression"),
+    (re.compile(r"cười điên|cười man|cười điên loạn", re.IGNORECASE), "maniacal grin expression"),
+    (re.compile(r"gào|thét|\bkhóc\b", re.IGNORECASE), "screaming expression"),
+    (re.compile(r"kiếm|đao trấn|long tuyền", re.IGNORECASE), "ornate daoist sword in hand"),
+    (re.compile(r"thiên sư bài|bài thiên sư", re.IGNORECASE), "ritual celestial master badge in hand"),
+    (re.compile(r"hồ lô|bầu hồ lô", re.IGNORECASE), "daoist gourd flask"),
 ]
+
+# Action/pose tags — inserted EARLY in scene_prompt and replace weak generic poses.
+# These ensure ComfyUI draws the specific action, not just a standing portrait.
+_SCENE_ALIGN_ACTION_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bxẻng\b|khai quật|\bđào mộ\b|đào đất", re.IGNORECASE),
+     "figure crouching and digging with long-handled shovel into dark wet earth"),
+    (re.compile(r"\bnạy\b|\bbẩy\b|\bcậy\b|mở nắp|nhấc nắp quan", re.IGNORECASE),
+     "figure straining to pry open heavy coffin lid with iron crowbar"),
+    (re.compile(r"niệm chú|đọc chú|niệm kinh", re.IGNORECASE),
+     "figure kneeling with both arms raised in solemn ritual chant"),
+    (re.compile(r"ngã xuống|ngã lăn|đổ người|ngất xỉu", re.IGNORECASE),
+     "figure collapsing forward onto muddy ground"),
+    (re.compile(r"chỉ thẳng|buộc tội|vạch tội", re.IGNORECASE),
+     "figure pointing accusingly finger outstretched at another person"),
+    (re.compile(r"kéo áo|giật áo|lột áo", re.IGNORECASE),
+     "figure grabbing and pulling shirt of another person forcefully"),
+    (re.compile(r"vừa khóc vừa đánh|xông lên.*đánh|đánh.*khóc", re.IGNORECASE),
+     "female figure striking while crying in confrontation"),
+    (re.compile(r"sờ đỉnh đầu|sờ đầu|đặt tay lên đầu", re.IGNORECASE),
+     "elder figure carefully placing palm on child head in examination"),
+    (re.compile(r"cắm cờ|chiêu hồn|\bcây cờ\b", re.IGNORECASE),
+     "figure planting tall ritual banner staff into wet muddy ground"),
+    (re.compile(r"đặt thi thể|đặt xác|đặt lên thi", re.IGNORECASE),
+     "figure carefully placing shrouded corpse into open coffin"),
+    (re.compile(r"đóng đinh|cắm đinh", re.IGNORECASE),
+     "figure hammering ritual iron nails into wooden coffin surface"),
+    (re.compile(r"ôm cổ|nuốt.*vật|nhai.*vật", re.IGNORECASE),
+     "figure clutching own throat with convulsing hands"),
+    (re.compile(r"cắt chỉ đỏ|cắt.*chỉ|dao.*chỉ", re.IGNORECASE),
+     "figure slicing red thread with knife in focused stance"),
+    (re.compile(r"phát hiện ra|nhìn thấy lần đầu", re.IGNORECASE),
+     "dramatic close-up reveal of discovered object in foreground"),
+]
+
+# Generic pose tags that get REPLACED when a specific action rule fires.
+_WEAK_POSE_TAGS: frozenset[str] = frozenset([
+    "figure standing",
+    "figure performing ritual",
+    "standing figure",
+    "ritual figure",
+    "action pose",
+    "figure in ceremonial stance",
+    "dynamic pose",
+    "action scene",
+    "figure and ritual",
+    "performing ritual",
+])
+
+
+def _rewrite_scene_prompts_from_narration(
+    shots: List[ShotScript],
+    episode_num: int,
+) -> List[ShotScript]:
+    """LLM rewrite pass: align scene_prompt with the exact action in narration_text.
+
+    Sends all shots in a single call. On failure, returns originals unchanged.
+    """
+    payload = [
+        {
+            "shot_index": i,
+            "narration_text": s.narration_text,
+            "scene_prompt": s.scene_prompt,
+        }
+        for i, s in enumerate(shots)
+    ]
+    prompt = (
+        f"Rewrite scene_prompts for Episode {episode_num} shots so each one "
+        f"visually matches its narration_text.\n\n"
+        f"Shots:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+    try:
+        raw = ollama_client.generate_json(
+            prompt=prompt, system=_NARRATION_ALIGN_SYSTEM, temperature=0.3
+        )
+    except Exception as exc:
+        logger.warning(
+            "scene_prompt narration-rewrite failed ({}) — keeping originals | episode={}",
+            exc, episode_num,
+        )
+        return shots
+
+    if not isinstance(raw, list):
+        # LLM may wrap array in {"shots": [...]} or similar
+        if isinstance(raw, dict):
+            for key in ("shots", "scene_prompts", "result", "items"):
+                if isinstance(raw.get(key), list):
+                    raw = raw[key]
+                    break
+        if not isinstance(raw, list):
+            logger.warning(
+                "scene_prompt narration-rewrite returned non-list (type={}) — keeping originals | episode={}",
+                type(raw).__name__, episode_num,
+            )
+            return shots
+
+    shots = list(shots)
+    rewrote = 0
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("shot_index")
+        new_prompt = (item.get("scene_prompt") or "").strip()
+        if not isinstance(idx, int) or not new_prompt or idx < 0 or idx >= len(shots):
+            continue
+        shots[idx] = shots[idx].model_copy(update={"scene_prompt": new_prompt})
+        rewrote += 1
+
+    logger.info(
+        "scene_prompt narration-rewrite done | episode={} rewrote={}/{}",
+        episode_num, rewrote, len(shots),
+    )
+    return shots
 
 
 def _load_carryover(episode_num: int) -> List[ShotScript]:
@@ -381,6 +529,9 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
     episode_shots = _normalize_camera_flow(episode_shots, episode_num)
     episode_shots = _backfill_characters(episode_shots, arc.characters_in_episode, episode_num)
+    # LLM rewrite: scene_prompt must depict what narration_text says (WHO/ACTION/OBJECT/WHERE)
+    episode_shots = _rewrite_scene_prompts_from_narration(episode_shots, episode_num)
+    # Rule-based layer: inject specific artifact/object tags that LLM might miss
     episode_shots = _align_scene_prompt_with_narration(episode_shots, episode_num)
 
     script = EpisodeScript(
@@ -572,8 +723,10 @@ def _align_scene_prompt_with_narration(
 ) -> List[ShotScript]:
     """Inject missing visual tags into scene_prompt based on narration_text.
 
-    This deterministic pass reduces semantic drift between narration and visuals
-    without calling LLM again.
+    Two-tier pass:
+    1. ACTION rules — insert early (after position 3) + remove weak generic pose tags.
+       These ensure ComfyUI draws the actual physical action, not a standing portrait.
+    2. OBJECT rules — append at the end as prop/artifact hints (existing behavior).
     """
     aligned = 0
     updated: List[ShotScript] = []
@@ -581,19 +734,43 @@ def _align_scene_prompt_with_narration(
     for shot in shots:
         scene_tags = [t.strip() for t in shot.scene_prompt.split(",") if t.strip()]
         scene_lower = {t.lower() for t in scene_tags}
+        narration = shot.narration_text
 
-        extra_tags: List[str] = []
-        for pattern, tag in _SCENE_ALIGN_RULES:
-            if pattern.search(shot.narration_text) and tag.lower() not in scene_lower:
-                extra_tags.append(tag)
+        action_tags: List[str] = []
+        object_tags: List[str] = []
 
-        # Keep alignment hints lightweight to avoid prompt bloat.
-        if extra_tags:
-            merged = scene_tags + extra_tags[:3]
-            updated.append(shot.model_copy(update={"scene_prompt": ", ".join(merged)}))
-            aligned += 1
-        else:
+        for pattern, tag in _SCENE_ALIGN_ACTION_RULES:
+            if pattern.search(narration) and tag.lower() not in scene_lower:
+                action_tags.append(tag)
+
+        for pattern, tag in _SCENE_ALIGN_OBJECT_RULES:
+            if pattern.search(narration) and tag.lower() not in scene_lower:
+                object_tags.append(tag)
+
+        if not action_tags and not object_tags:
             updated.append(shot)
+            continue
+
+        if action_tags:
+            # Remove weak/generic pose tags that the specific action makes redundant.
+            scene_tags = [
+                t for t in scene_tags
+                if t.lower() not in _WEAK_POSE_TAGS
+            ]
+            # Insert action tags after the first 3 positional tags (sfw/clothed + location).
+            insert_at = min(3, max(0, len(scene_tags) - 1))
+            for i, tag in enumerate(action_tags[:2]):
+                scene_tags.insert(insert_at + i, tag)
+
+        # Append object tags at the end (max 3, deduplicated).
+        scene_lower_now = {t.lower() for t in scene_tags}
+        for tag in object_tags[:3]:
+            if tag.lower() not in scene_lower_now:
+                scene_tags.append(tag)
+                scene_lower_now.add(tag.lower())
+
+        updated.append(shot.model_copy(update={"scene_prompt": ", ".join(scene_tags)}))
+        aligned += 1
 
     if aligned:
         logger.info(
