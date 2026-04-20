@@ -7,7 +7,7 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config.settings import settings
-from llm.client import ollama_client
+from llm.client import script_client as ollama_client
 from llm.summarizer import load_arc_overview
 from models.schemas import CameraFlow, EpisodeScript, ShotScript
 

@@ -8,7 +8,7 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config.settings import settings
-from llm.client import ollama_client
+from llm.client import summary_client as ollama_client
 from models.schemas import ArcOverview, ChunkSummary
 from pipeline.state import StateDB
 

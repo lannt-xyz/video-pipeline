@@ -10,7 +10,7 @@ from loguru import logger
 from config.settings import settings
 from pipeline.state import StateDB
 from pipeline.validator import ValidationError, validator
-from pipeline.vram_manager import vram_manager
+from pipeline.vram_manager import VRAMConsumer, vram_manager
 
 if TYPE_CHECKING:
     from image_gen.comfyui_client import ComfyUIClient
@@ -58,7 +58,7 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
         db.set_episode_status(episode_num, "SCRIPTED")
         return
 
-    vram_manager.unload_comfyui()
+    vram_manager.acquire(VRAMConsumer.OLLAMA)
     vram_manager.health_check_ollama()
 
     db.record_phase_start(episode_num, "llm")
@@ -82,6 +82,15 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             "No characters detected in arc; skipping profile build | episode={}",
             episode_num,
         )
+
+    # Evict summary model before loading script model to avoid VRAM pressure
+    # when the two models are different (e.g. Gemma 4 → Mistral Small 3).
+    if settings.effective_summary_model != settings.effective_script_model:
+        logger.info(
+            "Switching LLM model | unloading={} next={}",
+            settings.effective_summary_model, settings.effective_script_model,
+        )
+        vram_manager.unload_model(settings.effective_summary_model)
 
     logger.info("Writing script | episode={}", episode_num)
     write_episode_script(episode_num)
@@ -611,7 +620,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
         db.set_episode_status(episode_num, "IMAGES_DONE")
         return
 
-    vram_manager.unload_ollama()
+    vram_manager.acquire(VRAMConsumer.COMFYUI)
     vram_manager.health_check_comfyui()
 
     # Ensure character anchors exist (idempotent)
@@ -675,7 +684,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                         "episode={} shot={} frame={} error={}",
                         episode_num, idx, fidx, str(exc)[:200],
                     )
-                    vram_manager.unload_comfyui()
+                    vram_manager.flush()
                     try:
                         comfyui_client.generate_image(workflow, replacements, output_path)
                     except Exception:
@@ -880,13 +889,9 @@ def run_episode(
             )
             # Always free VRAM on failure so the next run is not blocked
             try:
-                vram_manager.unload_ollama()
+                vram_manager.release_all()
             except Exception as vram_exc:
-                logger.warning("Ollama unload failed during cleanup | error={}", vram_exc)
-            try:
-                vram_manager.unload_comfyui()
-            except Exception as vram_exc:
-                logger.warning("ComfyUI unload failed during cleanup | error={}", vram_exc)
+                logger.warning("VRAM release failed during cleanup | error={}", vram_exc)
             raise
 
 
@@ -998,7 +1003,7 @@ def probe_images(episode_num: int, gen_shots: int = 0) -> None:
     probe_dir = Path(settings.data_dir) / "probe" / f"episode-{episode_num:03d}"
     probe_dir.mkdir(parents=True, exist_ok=True)
 
-    vram_manager.unload_ollama()
+    vram_manager.acquire(VRAMConsumer.COMFYUI)
     vram_manager.health_check_comfyui()
 
     print(f"{BOLD}Generating {gen_shots} probe shot(s) → {probe_dir}{RESET}\n")

@@ -101,13 +101,13 @@ def _open_db(db_path: str) -> Generator[sqlite3.Connection, None, None]:
 
 
 def _wiki_characters_has_is_delete(con: sqlite3.Connection) -> bool:
-    """Return True when wiki_characters has soft-delete column is_delete."""
+    """Return True when wiki_characters has soft-delete column is_deleted."""
     rows = con.execute("PRAGMA table_info(wiki_characters)").fetchall()
-    return any(row["name"] == "is_delete" for row in rows)
+    return any(row["name"] == "is_deleted" for row in rows)
 
 
 def _load_wiki_character(character_id: str, con: sqlite3.Connection) -> Optional[dict]:
-    active_filter = " AND is_delete = 0" if _wiki_characters_has_is_delete(con) else ""
+    active_filter = " AND is_deleted = 0" if _wiki_characters_has_is_delete(con) else ""
     cur = con.execute(
         f"SELECT * FROM wiki_characters WHERE character_id = ?{active_filter}",
         (character_id,),
@@ -495,7 +495,7 @@ def build_profiles_for_episode(
     built = skipped = failed = 0
 
     with _open_db(wiki_db) as con:
-        active_filter = " WHERE is_delete = 0" if _wiki_characters_has_is_delete(con) else ""
+        active_filter = " WHERE is_deleted = 0" if _wiki_characters_has_is_delete(con) else ""
 
         # Build name/alias → character_id lookup
         rows = con.execute(
@@ -532,7 +532,7 @@ def build_profiles_for_episode(
 
         for char_id in target_ids:
             canonical_name_filter = (
-                " AND is_delete = 0" if _wiki_characters_has_is_delete(con) else ""
+                " AND is_deleted = 0" if _wiki_characters_has_is_delete(con) else ""
             )
             wiki_row = con.execute(
                 f"SELECT name FROM wiki_characters WHERE character_id=?{canonical_name_filter}",
@@ -637,7 +637,7 @@ def build_all_profiles(force: bool = False) -> list[Character]:
         return extract_all_characters()
 
     with _open_db(wiki_db) as con:
-        active_filter = " WHERE is_delete = 0" if _wiki_characters_has_is_delete(con) else ""
+        active_filter = " WHERE is_deleted = 0" if _wiki_characters_has_is_delete(con) else ""
 
         cur = con.execute(
             f"SELECT character_id, name FROM wiki_characters{active_filter} ORDER BY character_id"

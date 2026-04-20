@@ -16,9 +16,9 @@ from config.settings import settings
 class OllamaClient:
     """Thin httpx wrapper for Ollama REST API. No ollama-python SDK."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None) -> None:
         self.base_url = settings.ollama_url
-        self.model = settings.llm_model
+        self.model = model or settings.llm_model
         self.timeout = settings.llm_timeout
 
     def health_check(self) -> bool:
@@ -215,3 +215,6 @@ class OllamaClient:
 
 
 ollama_client = OllamaClient()
+# Phase-specific clients — model falls back to llm_model when the phase fields are empty.
+summary_client = OllamaClient(model=settings.effective_summary_model)
+script_client = OllamaClient(model=settings.effective_script_model)

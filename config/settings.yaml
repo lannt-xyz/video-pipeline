@@ -11,6 +11,10 @@ comfyui_url: "http://localhost:8188"
 
 # LLM configuration gemma4-32k:latest
 llm_model: "gemma4-32k:latest"
+# Phase-specific model overrides (empty = use llm_model)
+summary_model: "gemma4-32k:latest"
+# qwen2.5:14b, mistral-small:22b
+script_model: "qwen2.5:14b"
 llm_timeout: 120
 llm_max_retries: 3
 llm_context_size: 16384

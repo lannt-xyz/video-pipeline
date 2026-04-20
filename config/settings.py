@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     # LLM configuration
     llm_model: str = "qwen2.5:7b-instruct-q8_0"
+    # Phase-specific models (fall back to llm_model when empty)
+    summary_model: str = ""   # used by summarizer & character_extractor
+    script_model: str = ""    # used by scriptwriter (scene_prompt / narration)
     llm_timeout: int = 120
     llm_max_retries: int = 3
     llm_context_size: int = 16384
@@ -114,6 +117,16 @@ class Settings(BaseSettings):
     @property
     def total_episodes(self) -> int:
         return (self.total_chapters + self.chapters_per_episode - 1) // self.chapters_per_episode
+
+    @property
+    def effective_summary_model(self) -> str:
+        """Model used for summarize / character extraction phases."""
+        return self.summary_model.strip() or self.llm_model
+
+    @property
+    def effective_script_model(self) -> str:
+        """Model used for scriptwriting / scene-prompt generation phases."""
+        return self.script_model.strip() or self.llm_model
 
 
 settings = Settings()

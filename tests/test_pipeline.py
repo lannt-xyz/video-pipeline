@@ -324,7 +324,7 @@ class TestLLMPhaseOrchestrator:
 
         with (
             patch("pipeline.orchestrator._episode_chapter_range", return_value=(1, 2)),
-            patch("pipeline.orchestrator.vram_manager.unload_comfyui"),
+            patch("pipeline.orchestrator.vram_manager.acquire"),
             patch("pipeline.orchestrator.vram_manager.health_check_ollama"),
             patch("llm.summarizer.summarize_episode"),
             patch("llm.summarizer.load_arc_overview", return_value=arc),
