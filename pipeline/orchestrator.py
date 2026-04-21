@@ -487,29 +487,6 @@ def _build_thumbnail_scene_prompt(scene_prompt: str) -> str:
     )
 
 
-def _generate_scene_fallback(
-    comfyui_client: "ComfyUIClient",
-    prompt_text: str,
-    seed: int,
-    output_path: Path,
-) -> None:
-    """Fallback: generate shot with txt2img_scene (no IPAdapter)."""
-    # Prepend framing tags when not already present to prevent portrait bias.
-    fallback_prompt = prompt_text
-    if "wide establishing shot" not in prompt_text.lower():
-        fallback_prompt = f"{_SCENE_FRAMING_TAGS}, {prompt_text}"
-    comfyui_client.generate_image(
-        "image_gen/workflows/txt2img_scene.json",
-        {
-            "SCENE_PROMPT": fallback_prompt,
-            "NEGATIVE_PROMPT": _NEGATIVE_BASE + _SCENE_ANTI_PORTRAIT_NEG,
-            "WIDTH": settings.image_width,
-            "HEIGHT": settings.image_height,
-            "SEED": seed,
-        },
-        output_path,
-    )
-
 
 def _resolve_char_anchor_pairs(shot_characters: list, characters_map: dict) -> list:
     """Resolve the first 2 characters of a shot to (char_obj, anchors) pairs.
@@ -541,9 +518,9 @@ def _build_shot_image_params(
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
+    All shots use txt2img_scene.json — no IPAdapter.
     SCENE_PROMPT contains ONLY visual content (location, action, objects, mood).
     Metadata tags (sfw, anime style, etc.) live in the workflow CLIP suffix.
-    Character identity is handled by IPAdapter anchors — not text prompt.
     """
     has_female = any(c is not None and c.gender == "female" for c, _ in char_anchor_pairs)
     negative_base = (
@@ -552,8 +529,6 @@ def _build_shot_image_params(
         else _NEGATIVE_BASE
     )
 
-    # Anti-split tags: prevent PonyXL from tiling multiple figures into a grid
-    _ANTI_SPLIT_DUAL = ", (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5), (4girls:1.5), (4boys:1.5)"
     _ANTI_SPLIT_SINGLE = ", (2girls:1.5), (2boys:1.5), (multiple girls:1.5), (multiple boys:1.5), (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5)"
 
     # Strip leftover metadata tags that LLM might still include (from cached scripts).
@@ -562,68 +537,38 @@ def _build_shot_image_params(
         prompt_text, char_anchor_pairs, artifact_hints_by_name
     )
 
+    # Gender count tags for character shots
+    gender_tags = ""
     if len(char_anchor_pairs) >= 2:
         genders = [c.gender if c else "male" for c, _ in char_anchor_pairs]
-        count_tag = (
+        gender_tags = (
             "2boys" if all(g == "male" for g in genders)
             else "2girls" if all(g == "female" for g in genders)
             else "1boy, 1girl"
         )
-        # Scene content + gender count only. No clothing/DNA — IPAdapter handles identity.
-        scene_prompt = ", ".join(
-            [p for p in [scene_text, artifact_detail_tags, count_tag] if p]
-        )
-        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=22)
-        workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
-        replacements = {
-            "SCENE_PROMPT": scene_prompt,
-            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_DUAL,
-            "WIDTH": settings.image_width,
-            "HEIGHT": settings.image_height,
-            "SEED": seed,
-            "ANCHOR_PATH": char_anchor_pairs[0][1][0],
-            "ANCHOR_PATH_2": char_anchor_pairs[1][1][0],
-        }
     elif len(char_anchor_pairs) == 1:
-        char_obj, anchors = char_anchor_pairs[0]
-        gender_tag = "1girl" if (char_obj and char_obj.gender == "female") else "1boy"
-        # Scene content + gender tag only. IPAdapter handles face/clothing identity.
-        parts = [
-            p for p in [scene_text, artifact_detail_tags, gender_tag, "solo"]
-            if p
-        ]
-        scene_prompt = ", ".join(parts)
-        scene_prompt = _compact_prompt_tags(scene_prompt, max_tags=22)
-        workflow = "image_gen/workflows/txt2img_ipadapter.json"
-        replacements = {
-            "SCENE_PROMPT": scene_prompt,
-            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE,
-            "WIDTH": settings.image_width,
-            "HEIGHT": settings.image_height,
-            "SEED": seed,
-            "ANCHOR_PATH": anchors[0],
-        }
-        if len(anchors) > 1:
-            replacements["ANCHOR_PATH_2"] = anchors[1]
-            workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
-        if len(anchors) > 2:
-            replacements["ANCHOR_PATH_3"] = anchors[2]
-    else:
-        workflow = "image_gen/workflows/txt2img_scene.json"
-        scene_prompt_parts = [p for p in [scene_text, artifact_detail_tags] if p]
-        # Prepend framing tags so SDXL establishes a wide shot instead of portrait.
+        char_obj = char_anchor_pairs[0][0]
+        gender_tags = "1girl, solo" if (char_obj and char_obj.gender == "female") else "1boy, solo"
+
+    scene_prompt_parts = [p for p in [scene_text, artifact_detail_tags, gender_tags] if p]
+
+    # Prepend framing tags for scene-only (no character) shots.
+    if not char_anchor_pairs:
         if _SCENE_FRAMING_TAGS not in (scene_prompt_parts[0] if scene_prompt_parts else ""):
             scene_prompt_parts.insert(0, _SCENE_FRAMING_TAGS)
-        replacements = {
-            "SCENE_PROMPT": _compact_prompt_tags(
-                ", ".join(scene_prompt_parts),
-                max_tags=24,
-            ),
-            "NEGATIVE_PROMPT": negative_base + _ANTI_SPLIT_SINGLE + _SCENE_ANTI_PORTRAIT_NEG,
-            "WIDTH": settings.image_width,
-            "HEIGHT": settings.image_height,
-            "SEED": seed,
-        }
+
+    neg = negative_base + _ANTI_SPLIT_SINGLE
+    if not char_anchor_pairs:
+        neg += _SCENE_ANTI_PORTRAIT_NEG
+
+    workflow = "image_gen/workflows/txt2img_scene.json"
+    replacements = {
+        "SCENE_PROMPT": _compact_prompt_tags(", ".join(scene_prompt_parts), max_tags=24),
+        "NEGATIVE_PROMPT": neg,
+        "WIDTH": settings.image_width,
+        "HEIGHT": settings.image_height,
+        "SEED": seed,
+    }
 
     return workflow, replacements
 
@@ -632,7 +577,6 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     from llm.scriptwriter import load_episode_script
     from llm.character_extractor import load_all_characters
     from image_gen.comfyui_client import comfyui_client
-    from image_gen.character_gen import generate_character_anchors
     from video.frame_decomposer import decompose_all_shots
 
     if dry_run:
@@ -643,16 +587,13 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     vram_manager.acquire(VRAMConsumer.COMFYUI)
     vram_manager.health_check_comfyui()
 
-    # Ensure character anchors exist (idempotent)
-    generate_character_anchors()
-
     script = load_episode_script(episode_num)
     # Decompose shots into multi-frame structure
     script = script.model_copy(update={"shots": decompose_all_shots(script.shots)})
     images_dir = Path(settings.data_dir) / "images" / f"episode-{episode_num:03d}"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build name→Character map for shared helpers
+    # Build name→Character map for gender resolution
     characters_map = {c.name: c for c in load_all_characters()}
     artifact_hints_by_name = _load_character_artifact_hints()
 
@@ -695,38 +636,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                 prompt_text, char_anchor_pairs, seed, artifact_hints_by_name
             )
 
-            try:
-                comfyui_client.generate_image(workflow, replacements, output_path)
-            except Exception as exc:
-                err_msg = str(exc).lower()
-                is_ipadapter = workflow != "image_gen/workflows/txt2img_scene.json"
-                is_model_error = "model not found" in err_msg or "ipadapter" in err_msg
-
-                if is_ipadapter and is_model_error:
-                    logger.warning(
-                        "IPAdapter model error, flushing ComfyUI VRAM and retrying | "
-                        "episode={} shot={} frame={} error={}",
-                        episode_num, idx, fidx, str(exc)[:200],
-                    )
-                    vram_manager.flush()
-                    try:
-                        comfyui_client.generate_image(workflow, replacements, output_path)
-                    except Exception:
-                        logger.error(
-                            "IPAdapter retry failed, falling back to txt2img_scene | "
-                            "episode={} shot={} frame={}",
-                            episode_num, idx, fidx,
-                        )
-                        _generate_scene_fallback(comfyui_client, prompt_text, seed, output_path)
-                elif is_ipadapter:
-                    logger.warning(
-                        "IPAdapter workflow failed, falling back to txt2img_scene | "
-                        "episode={} shot={} frame={} error={}",
-                        episode_num, idx, fidx, str(exc)[:200],
-                    )
-                    _generate_scene_fallback(comfyui_client, prompt_text, seed, output_path)
-                else:
-                    raise
+            comfyui_client.generate_image(workflow, replacements, output_path)
             logger.info(
                 "Image generated | episode={} shot={} frame={} workflow={}",
                 episode_num, idx, fidx, Path(workflow).stem,
