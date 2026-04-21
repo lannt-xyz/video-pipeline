@@ -10,14 +10,29 @@ ollama_url: "http://localhost:11434"
 comfyui_url: "http://localhost:8188"
 
 # LLM configuration gemma4-32k:latest
-llm_model: "gemma4-32k:latest"
+llm_model: "gpt-oss:20b"
 # Phase-specific model overrides (empty = use llm_model)
-summary_model: "gemma4-32k:latest"
-# qwen2.5:14b, mistral-small:22b
-script_model: "qwen2.5:14b"
+summary_model: "gpt-oss:20b"
+# qwen2.5:14b, mistral-small:22b, gpt-oss:20b
+script_model: "gpt-oss:20b"
+# Set false when script_model does not support Ollama constrained JSON decoding (e.g. gpt-oss family)
+# Only affects the script client — summary/other clients always use native format mode
+script_json_format: false
+# Set false when summary_model does not support Ollama constrained JSON decoding
+summary_json_format: false
+# Set false when llm_model does not support Ollama constrained JSON decoding
+llm_json_format: false
 llm_timeout: 120
 llm_max_retries: 3
-llm_context_size: 16384
+llm_context_size: 32768
+
+# GitHub Models API — used when script_provider = "github"
+# Switch script/scene-prompt generation to GPT-5 or gpt-4.1 via GitHub API
+script_provider: "ollama"       # "ollama" | "github"
+github_api_url: "https://models.inference.ai.azure.com"
+github_model: "gpt-4.1"      # gpt-5 has 1 req/min limit even on Pro+; gpt-4.1 has much higher limits
+github_rpm: 10                # proactive throttle: requests per minute (gpt-4.1=10, gpt-5=1)
+# Token: set PIPELINE_GITHUB_TOKEN env var — never put the real token here
 
 # ComfyUI configuration
 comfyui_timeout: 300

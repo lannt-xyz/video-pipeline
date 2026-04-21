@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         yaml_file=_YAML_FILE,
         yaml_file_encoding="utf-8",
+        env_file=str(_PROJECT_ROOT / ".env"),
+        env_file_encoding="utf-8",
         env_prefix="PIPELINE_",
         extra="ignore",
     )
@@ -28,6 +30,7 @@ class Settings(BaseSettings):
         return (
             init_settings,
             env_settings,
+            dotenv_settings,
             YamlConfigSettingsSource(settings_cls),
         )
 
@@ -48,10 +51,23 @@ class Settings(BaseSettings):
     summary_model: str = ""   # used by summarizer & character_extractor
     script_model: str = ""    # used by scriptwriter (scene_prompt / narration)
     llm_timeout: int = 120
+
+    # GitHub Models API (for script/scene-prompt generation)
+    # Provider: "ollama" | "github" — controls which backend scriptwriter uses
+    script_provider: str = "ollama"
+    github_api_url: str = "https://models.inference.ai.azure.com"
+    github_model: str = "gpt-4.1"
+    github_rpm: int = 10  # proactive rate limit (requests/min); gpt-5=1, gpt-4.1=10
+    # GitHub token: set via env var PIPELINE_GITHUB_TOKEN (never hardcode)
+    github_token: str = ""
     llm_max_retries: int = 3
     llm_context_size: int = 16384
-
-    # ComfyUI configuration
+    # Set false when script_model does not support Ollama constrained JSON decoding (e.g. gpt-oss)
+    # Only affects the script client — summary/other clients use native format mode
+    script_json_format: bool = True
+    summary_json_format: bool = True  # set false for summary_model that ignores format:json
+    llm_json_format: bool = True      # set false for llm_model that ignores format:json
+    ollama_json_format: bool = True  # deprecated alias kept for backward-compat; prefer script_json_format
     comfyui_timeout: int = 300
     comfyui_poll_interval: int = 2
 

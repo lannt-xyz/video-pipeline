@@ -1,9 +1,12 @@
 import json
+import threading
+import time
 from typing import Any, Optional
 
 import httpx
 from loguru import logger
 from tenacity import (
+    RetryError,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -16,10 +19,13 @@ from config.settings import settings
 class OllamaClient:
     """Thin httpx wrapper for Ollama REST API. No ollama-python SDK."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, json_format: bool = True) -> None:
         self.base_url = settings.ollama_url
         self.model = model or settings.llm_model
         self.timeout = settings.llm_timeout
+        # When False, skip Ollama format:json flag and inject prompt instruction instead.
+        # Use for models that ignore constrained decoding (e.g. gpt-oss family).
+        self._json_format = json_format
 
     def health_check(self) -> bool:
         """Raises RuntimeError if Ollama is not reachable."""
@@ -77,11 +83,20 @@ class OllamaClient:
         temperature: float = 0.3,
     ) -> Any:
         """Call Ollama and return parsed JSON. Raises json.JSONDecodeError on bad output."""
+        # When constrained JSON decoding is disabled, inject explicit instruction into prompt.
+        actual_prompt = prompt
+        if not self._json_format:
+            actual_prompt = (
+                prompt.rstrip()
+                + "\n\nIMPORTANT: Respond with ONLY a valid JSON object. "
+                "No explanation, no markdown fences, no extra text — pure JSON only."
+            )
+
         raw = self.generate(
-            prompt=prompt,
+            prompt=actual_prompt,
             system=system,
             temperature=temperature,
-            response_format="json",
+            response_format="json" if self._json_format else None,
         )
 
         stripped = self._strip_markdown_fences(raw)
@@ -214,7 +229,141 @@ class OllamaClient:
             return None
 
 
-ollama_client = OllamaClient()
+ollama_client = OllamaClient(json_format=settings.llm_json_format)
 # Phase-specific clients — model falls back to llm_model when the phase fields are empty.
-summary_client = OllamaClient(model=settings.effective_summary_model)
-script_client = OllamaClient(model=settings.effective_script_model)
+summary_client = OllamaClient(model=settings.effective_summary_model, json_format=settings.summary_json_format)
+
+
+def _github_retry_wait(retry_state) -> float:  # type: ignore[type-arg]
+    """Custom tenacity wait: respect Retry-After on 429, else exponential backoff."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        retry_after = int(exc.response.headers.get("retry-after", 65))
+        logger.warning(
+            "GitHub Models rate limit (429) — waiting {}s before retry", retry_after
+        )
+        return float(retry_after)
+    # Exponential backoff for transient errors (5xx, timeout)
+    attempt = retry_state.attempt_number
+    return min(2.0 ** attempt * 2, 30.0)
+
+
+class GitHubLLMClient:
+    """Thin httpx wrapper for GitHub Models API (OpenAI-compatible chat completions)."""
+
+    def __init__(self) -> None:
+        self.base_url = settings.github_api_url.rstrip("/")
+        self.model = settings.github_model
+        self.timeout = settings.llm_timeout
+        self._token = settings.github_token
+        # Proactive rate limiting: min interval between requests
+        self._min_interval: float = 60.0 / max(settings.github_rpm, 1)
+        self._last_call_at: float = 0.0
+        self._rate_lock = threading.Lock()
+        if not self._token:
+            logger.warning(
+                "PIPELINE_GITHUB_TOKEN is not set — GitHub Models API calls will fail."
+            )
+
+    def health_check(self) -> bool:
+        """Validates token is present; raises RuntimeError if missing."""
+        if not self._token:
+            raise RuntimeError("GitHub token not configured (PIPELINE_GITHUB_TOKEN).")
+        return True
+
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=_github_retry_wait,
+        retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError)),
+        reraise=True,
+    )
+    def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        response_format: Optional[str] = None,
+    ) -> str:
+        """Call /chat/completions and return assistant message content."""
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if response_format == "json":
+            payload["response_format"] = {"type": "json_object"}
+
+        # Proactive throttle — sleep before sending if needed
+        with self._rate_lock:
+            elapsed = time.monotonic() - self._last_call_at
+            wait = self._min_interval - elapsed
+            if wait > 0:
+                logger.debug("GitHub rate throttle: sleeping {:.1f}s", wait)
+                time.sleep(wait)
+            self._last_call_at = time.monotonic()
+
+        logger.debug(
+            "Calling GitHub Models API | model={} prompt_len={}", self.model, len(prompt)
+        )
+        if not self._token:
+            raise RuntimeError(
+                "GitHub token not set. Export PIPELINE_GITHUB_TOKEN env var."
+            )
+        resp = httpx.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=self.timeout,
+        )
+        # Do not retry on 4xx client errors except 429 (rate limit)
+        if resp.status_code not in (429,) and 400 <= resp.status_code < 500:
+            logger.error(
+                "GitHub Models API client error {} — not retrying: {}",
+                resp.status_code, resp.text[:300],
+            )
+            resp.raise_for_status()  # raises immediately, no retry
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    def generate_json(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.3,
+    ) -> Any:
+        """Call GitHub Models API and return parsed JSON."""
+        raw = self.generate(
+            prompt=prompt,
+            system=system,
+            temperature=temperature,
+            response_format="json",
+        )
+
+        stripped = OllamaClient._strip_markdown_fences(raw)
+        if not stripped:
+            logger.warning("GitHub Models API returned empty response — will retry")
+            raise json.JSONDecodeError("Empty response from GitHub Models API", "", 0)
+
+        return json.loads(stripped)
+
+
+def get_script_client() -> "OllamaClient | GitHubLLMClient":
+    """Factory: return the correct LLM client for the scriptwriting phase."""
+    if settings.script_provider == "github":
+        return GitHubLLMClient()
+    return OllamaClient(
+        model=settings.effective_script_model,
+        json_format=settings.script_json_format,
+    )
+
+
+# Module-level instance for backward-compat imports (scriptwriter uses this)
+script_client = get_script_client()

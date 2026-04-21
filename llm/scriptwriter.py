@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List
 
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from config.settings import settings
 from llm.client import script_client as ollama_client
@@ -198,6 +198,7 @@ def _coerce_shot_item(item: object, episode_num: int, index: int) -> dict | None
 @retry(
     stop=stop_after_attempt(settings.llm_max_retries),
     wait=wait_exponential(min=2, max=15),
+    retry=retry_if_exception_type((json.JSONDecodeError, ValueError)),
 )
 def _generate_hook_shot(arc_text: str, episode_num: int) -> ShotScript:
     """Ask LLM to write exactly 1 hook shot for the episode opening."""
@@ -217,6 +218,7 @@ def _generate_hook_shot(arc_text: str, episode_num: int) -> ShotScript:
 @retry(
     stop=stop_after_attempt(settings.llm_max_retries),
     wait=wait_exponential(min=2, max=15),
+    retry=retry_if_exception_type((json.JSONDecodeError, ValueError)),
 )
 def _write_raw(arc_text: str, episode_num: int) -> dict:
     prompt = (

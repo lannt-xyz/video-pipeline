@@ -18,7 +18,7 @@ async def _generate_single(
 ) -> Tuple[int, Path]:
     """Generate TTS MP3 for a single shot. Respects semaphore concurrency limit."""
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=3, max=20))
     async def _tts() -> None:
         communicate = edge_tts.Communicate(narration_text, settings.tts_voice)
         await communicate.save(str(output_path))
@@ -33,7 +33,7 @@ async def _generate_single(
 async def generate_episode_tts(
     episode_num: int,
     shots: List[ShotScript],
-    max_concurrent: int = 5,
+    max_concurrent: int = 2,
 ) -> List[Path]:
     """Generate TTS for all shots in an episode concurrently.
     Returns list of audio paths in shot order.

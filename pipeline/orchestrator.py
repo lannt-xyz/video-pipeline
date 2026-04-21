@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import sqlite3
 import shutil
 import sys
@@ -510,6 +511,42 @@ def _resolve_char_anchor_pairs(shot_characters: list, characters_map: dict) -> l
     return pairs
 
 
+def _scene_id_seed(scene_id: str, episode_num: int) -> int:
+    """Deterministic seed from scene_id so all shots in the same location
+    share the same background composition base."""
+    key = f"{episode_num}:{scene_id}"
+    return int(hashlib.md5(key.encode()).hexdigest(), 16) % (2**31)
+
+
+def _extract_env_tags(scene_prompt: str) -> str:
+    """Extract location + lighting tags from a scene_prompt to use as
+    a shared environment baseline for subsequent shots in the same scene_id.
+
+    Heuristic: keep tags that contain location/lighting keywords and
+    do NOT contain action/pose keywords. Returns at most 2 tags."""
+    ACTION_WORDS = {"figure", "standing", "kneeling", "lunging", "running",
+                    "sitting", "holding", "raising", "pose", "wielding",
+                    "clasping", "reaching", "pointing", "crouching"}
+    tags = [t.strip() for t in scene_prompt.split(",") if t.strip()]
+    env_tags = [
+        t for t in tags
+        if not any(w in t.lower() for w in ACTION_WORDS)
+    ]
+    # Take first 2 environment tags (location + lighting)
+    return ", ".join(env_tags[:2])
+
+
+def _build_scene_env_baselines(shots) -> dict[str, str]:
+    """Return {scene_id: env_baseline_tags} — baseline from the FIRST shot
+    in each scene_id group for injection into subsequent shots."""
+    seen: dict[str, str] = {}
+    for shot in shots:
+        sid = shot.scene_id
+        if sid and sid not in seen:
+            seen[sid] = _extract_env_tags(shot.scene_prompt)
+    return seen
+
+
 def _build_shot_image_params(
     prompt_text: str,
     char_anchor_pairs: list,
@@ -597,6 +634,10 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     characters_map = {c.name: c for c in load_all_characters()}
     artifact_hints_by_name = _load_character_artifact_hints()
 
+    # Build scene-level environment baselines for continuity:
+    # shots sharing a scene_id inherit location+lighting tags from the first shot.
+    scene_env_baselines = _build_scene_env_baselines(script.shots)
+
     db.record_phase_start(episode_num, "images")
 
     for idx, shot in enumerate(script.shots):
@@ -626,11 +667,24 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             # Use frame.scene_prompt (with camera_tag prepended) if available,
             # otherwise fall back to shot.scene_prompt
             prompt_text = frame.scene_prompt if frame else shot.scene_prompt
-            # All frames in the SAME shot share the SAME seed so SDXL
-            # produces consistent composition (objects, lighting, poses).
-            # The camera_tag difference at prompt position 0 is enough to
-            # create the zoom / pan progression across frames.
-            seed = episode_num * 10000 + idx * 100
+
+            # Continuity: prepend env baseline from the first shot in this scene_id
+            # so SDXL sees consistent location+lighting tags across all shots in the scene.
+            scene_id = shot.scene_id
+            if scene_id and scene_id in scene_env_baselines:
+                baseline = scene_env_baselines[scene_id]
+                # Only prepend if baseline tags aren't already in this prompt
+                if baseline and baseline.split(",")[0].strip() not in prompt_text:
+                    prompt_text = baseline + ", " + prompt_text
+
+            # Continuity: shots in the same scene_id share the same seed base
+            # so background composition stays consistent across the location.
+            # Frames within the same shot also share the seed — only camera_tag differs,
+            # which is enough to drive the zoom/pan progression.
+            if scene_id:
+                seed = _scene_id_seed(scene_id, episode_num)
+            else:
+                seed = episode_num * 10000 + idx * 100
 
             workflow, replacements = _build_shot_image_params(
                 prompt_text, char_anchor_pairs, seed, artifact_hints_by_name
