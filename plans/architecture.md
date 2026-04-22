@@ -156,9 +156,48 @@ CREATE TABLE episode_timings (  -- để estimate ETA sau episode đầu
 
 **episode_timings** là addition mới: sau episode 1 hoàn thành, orchestrator tính ETA cho toàn bộ 99 episodes còn lại.
 
+#### [Quyết định 7] TTS Backend — Dual Strategy (Edge + Piper)
+
+**Vấn đề gốc**: `edge-tts` gọi Microsoft Azure TTS cloud → **phụ thuộc internet**. Nếu mất kết nối hoặc Azure có sự cố, toàn bộ Phase 4 bị block. Không có fallback.
+
+**Decision**: Hỗ trợ 2 backend, cấu hình qua `tts_backend` trong `settings.yaml`:
+
+| Backend | Thư viện | Internet | GPU | Chất lượng tiếng Việt | Ghi chú |
+|---------|----------|----------|-----|-----------------------|---------|
+| `"edge"` | `edge-tts` | **Bắt buộc** (Azure) | Không | Rất tốt (HoaiMyNeural) | Default |
+| `"piper"` | `piper-tts` | **Không cần** (local ONNX) | Không (CPU) | Tốt (vi_VN-vivos-medium) | Offline fallback |
+
+**Lý do chọn Piper làm local backend**:
+- CPU-only (ONNX Runtime) → không cạnh tranh VRAM với Ollama/ComfyUI
+- Vẫn chạy parallel với Phase 3 (không ảnh hưởng GPU)
+- Model nhỏ (~50-100MB), download từ HuggingFace một lần
+- Voices `vi_VN-vivos-x_low` và `vi_VN-vivos-medium` đã có tiếng Việt
+
+**Trade-off chấp nhận**: Chất lượng giọng đọc của piper thấp hơn HoaiMyNeural của edge-tts. Dùng `"piper"` khi không có internet hoặc muốn fully offline.
+
+**Consequence**: `config/settings.py` validate fail-fast tại startup nếu backend = `"piper"` mà file model không tồn tại.
+
+**Điều kiện review lại**: Nếu có local model tiếng Việt chất lượng tốt hơn (vd. Kokoro với Vietnamese fine-tune), swap backend mà không sửa code — chỉ thêm case mới trong `audio/tts.py`.
+
+**Cách dùng**:
+```yaml
+# config/settings.yaml
+tts_backend: "piper"          # chuyển sang local
+piper_model_path: "models/piper/vi_VN-vivos-medium.onnx"
+piper_config_path: "models/piper/vi_VN-vivos-medium.onnx.json"
+```
+
+Download model:
+```bash
+# vi_VN-vivos-medium (~70MB)
+mkdir -p models/piper
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/vi/vi_VN/vivos/medium/vi_VN-vivos-medium.onnx -O models/piper/vi_VN-vivos-medium.onnx
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/vi/vi_VN/vivos/medium/vi_VN-vivos-medium.onnx.json -O models/piper/vi_VN-vivos-medium.onnx.json
+```
+
 ---
 
-### Phase 4 — Production-Ready Checklist
+
 
 #### [RELIABILITY] ✅/⚠️
 - ✅ tenacity retry crawler (max 5, exp backoff)

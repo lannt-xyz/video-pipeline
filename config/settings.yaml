@@ -1,0 +1,35 @@
+# Story source — swap story = only edit this section, no code change
+story_slug: "mao-son-troc-quy-nhan"
+base_url: "https://truyencv.io/truyen/{story_slug}/chuong-{n}/"
+total_chapters: 3534
+chapters_per_episode: 35
+
+# External API endpoints
+ollama_url: "http://localhost:11434"
+comfyui_url: "http://localhost:8188"
+llm_model: "qwen2.5:7b-instruct:q8_0"
+
+# Feature flags
+enable_svd: false
+
+# TTS configuration
+# backend: "edge" (Azure cloud, requires internet) | "piper" (local CPU, offline)
+tts_backend: "edge"
+edge_voice: "vi-VN-HoaiMyNeural"
+# Piper model files — download from https://huggingface.co/rhasspy/piper-voices
+# e.g. vi_VN-vivos-medium.onnx and vi_VN-vivos-medium.onnx.json
+piper_model_path: "models/piper/vi_VN-vivos-medium.onnx"
+piper_config_path: "models/piper/vi_VN-vivos-medium.onnx.json"
+
+# Audio output
+audio_format: "mp3"
+audio_bitrate: "128k"
+
+# BGM
+bgm_volume_db: -15
+assets_music_dir: "assets/music"
+
+# Paths
+data_dir: "data"
+db_path: "db/pipeline.db"
+logs_dir: "logs"
