@@ -767,9 +767,34 @@ def run_audio(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     narration_paths = generate_episode_tts_sync(episode_num, script.shots)
 
     audio_dir = Path(settings.data_dir) / "audio" / f"episode-{episode_num:03d}"
+    mix_failures: list[int] = []
     for idx, narr_path in enumerate(narration_paths):
+        if not narr_path.exists():
+            logger.error(
+                "Narration file missing, skipping mix | episode={} shot={} path={}",
+                episode_num, idx, narr_path,
+            )
+            mix_failures.append(idx)
+            continue
         mixed_path = audio_dir / f"shot-{idx:02d}-mixed.aac"
-        mix_narration_with_bgm(narr_path, mixed_path, bgm_path)
+        try:
+            mix_narration_with_bgm(narr_path, mixed_path, bgm_path)
+        except Exception as exc:
+            logger.error(
+                "Audio mix failed | episode={} shot={} error={}",
+                episode_num, idx, exc,
+            )
+            mix_failures.append(idx)
+
+    if mix_failures:
+        logger.warning(
+            "Audio mix had failures | episode={} failed_shots={}/{}",
+            episode_num, len(mix_failures), len(narration_paths),
+        )
+        if len(mix_failures) == len(narration_paths):
+            raise RuntimeError(
+                f"All {len(narration_paths)} audio mix shots failed for episode {episode_num}."
+            )
 
     db.record_phase_done(episode_num, "audio")
     db.set_episode_status(episode_num, "AUDIO_DONE")

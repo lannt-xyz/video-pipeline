@@ -20,6 +20,9 @@ _FALLBACK_VOICES = [
 # edge-tts chokes on text longer than ~900 chars in a single call.
 _MAX_TTS_CHARS = 900
 
+# Sentence-ending punctuation used as preferred split points.
+_SPLIT_PUNCT = re.compile(r'(?<=[.!?。！？…,，;；:\n])')
+
 
 def _sanitize_tts_text(text: str) -> str:
     """Remove characters that cause edge-tts to return NoAudioReceived.
@@ -53,9 +56,37 @@ async def _generate_silence(output_path: Path, duration_sec: float = 6.0) -> Non
         "-acodec", "libmp3lame", "-b:a", "192k",
         str(output_path),
         stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
     )
-    await proc.wait()
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        err = stderr.decode(errors="replace") if stderr else "(no stderr)"
+        raise RuntimeError(f"FFmpeg silence generation failed for {output_path}: {err}")
+
+
+def _split_text_into_chunks(text: str, max_chars: int = _MAX_TTS_CHARS) -> List[str]:
+    """Split text into chunks <= max_chars, preferring sentence boundaries."""
+    if len(text) <= max_chars:
+        return [text]
+
+    # Split at punctuation boundaries first
+    parts = _SPLIT_PUNCT.split(text)
+    chunks: List[str] = []
+    current = ""
+    for part in parts:
+        if len(current) + len(part) <= max_chars:
+            current += part
+        else:
+            if current:
+                chunks.append(current.strip())
+            # If a single part exceeds max_chars, hard-split by word
+            while len(part) > max_chars:
+                chunks.append(part[:max_chars].strip())
+                part = part[max_chars:]
+            current = part
+    if current.strip():
+        chunks.append(current.strip())
+    return [c for c in chunks if c]
 
 
 async def _tts_one_voice(text: str, voice: str, output_path: Path) -> None:
@@ -72,27 +103,71 @@ async def _tts_one_voice(text: str, voice: str, output_path: Path) -> None:
     await _attempt()
 
 
+async def _tts_chunked(text: str, voice: str, output_path: Path) -> None:
+    """Generate TTS for long text by splitting into chunks and concatenating with FFmpeg."""
+    chunks = _split_text_into_chunks(text)
+    if len(chunks) == 1:
+        await _tts_one_voice(chunks[0], voice, output_path)
+        return
+
+    # Generate each chunk to a temp file
+    tmp_dir = output_path.parent / f".tmp_{output_path.stem}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    chunk_paths: List[Path] = []
+    try:
+        for i, chunk in enumerate(chunks):
+            chunk_path = tmp_dir / f"chunk_{i:03d}.mp3"
+            await _tts_one_voice(chunk, voice, chunk_path)
+            chunk_paths.append(chunk_path)
+
+        # Build FFmpeg concat list
+        concat_list = tmp_dir / "concat.txt"
+        concat_list.write_text(
+            "\n".join(f"file '{p.resolve()}'" for p in chunk_paths)
+        )
+
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_list),
+            "-acodec", "copy",
+            str(output_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace") if stderr else "(no stderr)"
+            raise RuntimeError(f"FFmpeg concat failed: {err}")
+    finally:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 async def generate_episode_tts(
     episode_num: int,
     shots: List[ShotScript],
-    max_concurrent: int = 1,
+    max_concurrent: int = 3,
 ) -> List[Path]:
     """Generate TTS for all shots in an episode.
 
     Returns list of audio paths in shot order. On per-shot failure (after all
     voice retries), writes a silent MP3 so the pipeline never crashes.
+    Raises RuntimeError if ALL shots fall back to silence (indicates systemic failure).
     """
     audio_dir = Path(settings.data_dir) / "audio" / f"episode-{episode_num:03d}"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     semaphore = asyncio.Semaphore(max_concurrent)
+    silence_shots: list[int] = []
 
     async def _generate_shot(
         shot_index: int,
         narration_text: str,
         output_path: Path,
         duration_sec: float,
-    ) -> Tuple[int, Path]:
+    ) -> Tuple[int, Path, bool]:
+        """Returns (index, path, is_silence)."""
         raw_text = (narration_text or "").strip()
         text = _sanitize_tts_text(raw_text)
 
@@ -102,15 +177,15 @@ async def generate_episode_tts(
                 shot_index, raw_text[:120],
             )
             await _generate_silence(output_path, duration_sec)
-            return shot_index, output_path
+            return shot_index, output_path, True
 
-        # Truncate if too long for a single edge-tts call
+        # Log if text will be chunked (not truncated)
         if len(text) > _MAX_TTS_CHARS:
-            logger.warning(
-                "narration_text truncated {} → {} chars | shot={}",
-                len(text), _MAX_TTS_CHARS, shot_index,
+            n_chunks = len(_split_text_into_chunks(text))
+            logger.debug(
+                "narration_text will be split into {} chunks ({} chars) | episode={} shot={}",
+                n_chunks, len(text), episode_num, shot_index,
             )
-            text = text[:_MAX_TTS_CHARS]
 
         logger.debug(
             "TTS request | shot={} voice={} chars={} text={!r}",
@@ -121,19 +196,19 @@ async def generate_episode_tts(
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             last_exc: Optional[Exception] = None
-            for attempt, voice in enumerate([_PRIMARY_VOICE, *_FALLBACK_VOICES]):
+            for attempt in range(3):
                 if attempt > 0:
-                    # Brief cooldown between voice switches to avoid back-to-back 429s
-                    await asyncio.sleep(3.0)
+                    # Brief cooldown before retry to avoid back-to-back 429s
+                    await asyncio.sleep(5.0)
                 try:
-                    await _tts_one_voice(text, voice, output_path)
+                    await _tts_chunked(text, _PRIMARY_VOICE, output_path)
                     logger.debug(
-                        "TTS ok | shot={} voice={} path={}", shot_index, voice, output_path
+                        "TTS ok | shot={} voice={} path={}", shot_index, _PRIMARY_VOICE, output_path
                     )
-                    return shot_index, output_path
+                    return shot_index, output_path, False
                 except Exception as exc:
                     logger.warning(
-                        "TTS failed | shot={} voice={} error={}", shot_index, voice, exc
+                        "TTS failed | shot={} attempt={} error={}", shot_index, attempt + 1, exc
                     )
                     last_exc = exc
 
@@ -143,7 +218,7 @@ async def generate_episode_tts(
                 shot_index, last_exc,
             )
             await _generate_silence(output_path, duration_sec)
-            return shot_index, output_path
+            return shot_index, output_path, True
 
     tasks = [
         _generate_shot(
@@ -157,9 +232,26 @@ async def generate_episode_tts(
 
     results = await asyncio.gather(*tasks)
     results_sorted = sorted(results, key=lambda x: x[0])
-    paths = [r[1] for r in results_sorted]
 
-    logger.info("TTS done | episode={} shots={}", episode_num, len(paths))
+    silence_shots = [idx for idx, _path, is_silence in results_sorted if is_silence]
+    if silence_shots:
+        logger.warning(
+            "TTS silence fallback | episode={} shots_with_silence={}/{}  indices={}",
+            episode_num, len(silence_shots), len(shots), silence_shots,
+        )
+
+    if len(silence_shots) == len(shots):
+        raise RuntimeError(
+            f"All {len(shots)} TTS shots failed for episode {episode_num}. "
+            "Check network connectivity or edge-tts rate limits."
+        )
+
+    paths = [path for _idx, path, _is_silence in results_sorted]
+
+    logger.info(
+        "TTS done | episode={} shots={} silence={}",
+        episode_num, len(paths), len(silence_shots),
+    )
     return paths
 
 
