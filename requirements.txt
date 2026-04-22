@@ -1,0 +1,29 @@
+# Core
+pydantic>=2.7,<3
+pydantic-settings[yaml]>=2.3,<3
+PyYAML>=6.0,<7
+
+# HTTP & networking
+httpx[asyncio]>=0.27,<1
+beautifulsoup4>=4.12,<5
+lxml>=5.2,<6
+
+# Retry
+tenacity>=8.3,<9
+
+# Logging
+loguru>=0.7,<1
+
+# TTS — edge backend (Azure cloud, requires internet)
+edge-tts>=6.1,<7
+
+# TTS — piper backend (local CPU, fully offline)
+# Model files downloaded separately from: https://huggingface.co/rhasspy/piper-voices
+piper-tts>=1.2,<2
+
+# Video / audio
+ffmpeg-python>=0.2,<1
+
+# Testing
+pytest>=8,<9
+pytest-asyncio>=0.23,<1

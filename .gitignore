@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Pipeline data (generated, not committed)
+data/
+db/
+logs/
+
+# Piper TTS model files (downloaded separately, ~50-100MB each)
+models/piper/
+
+# Assets (royalty-free music, added manually)
+assets/music/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor
+.vscode/
+.idea/
+*.swp
