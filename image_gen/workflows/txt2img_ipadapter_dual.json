@@ -144,11 +144,11 @@
         "15",
         0
       ],
-      "weight": 0.25,
+      "weight": 0.2,
       "weight_type": "ease in-out",
       "combine_embeds": "average",
-      "start_at": 0.0,
-      "end_at": 0.4,
+      "start_at": 0.2,
+      "end_at": 0.6,
       "embeds_scaling": "K+V w/ C penalty"
     }
   },
@@ -167,11 +167,11 @@
         "19",
         0
       ],
-      "weight": 0.25,
+      "weight": 0.2,
       "weight_type": "ease in-out",
       "combine_embeds": "average",
-      "start_at": 0.0,
-      "end_at": 0.4,
+      "start_at": 0.2,
+      "end_at": 0.6,
       "embeds_scaling": "K+V w/ C penalty"
     }
   },
