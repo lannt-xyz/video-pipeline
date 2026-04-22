@@ -557,7 +557,12 @@ def _build_shot_image_params(
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
-    All shots use txt2img_scene.json — no IPAdapter.
+    Workflow routing (frame 0 only — fan-out frames always use img2img_scene):
+      2 char pairs  → txt2img_ipadapter_dual   (ANCHOR_PATH + ANCHOR_PATH_2)
+      1 pair, 3 anchors → txt2img_ipadapter_multiref (ANCHOR_PATH/2/3)
+      1 pair, 1-2 anchors → txt2img_ipadapter (ANCHOR_PATH, or ANCHOR_PATH+2 for multiref)
+      0 pairs       → txt2img_scene
+
     SCENE_PROMPT contains ONLY visual content (location, action, objects, mood).
     Metadata tags (sfw, anime style, etc.) live in the workflow CLIP suffix.
     """
@@ -607,9 +612,35 @@ def _build_shot_image_params(
     }
 
     if init_image_path is not None:
+        # Fan-out frame (fidx > 0): img2img from frame-0; IPAdapter not needed.
         workflow = "image_gen/workflows/img2img_scene.json"
         replacements["INIT_IMAGE"] = init_image_path
         replacements["DENOISE"] = denoise
+    elif len(char_anchor_pairs) >= 2:
+        # 2-character scene: dual IPAdapter
+        workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
+        _, anchors1 = char_anchor_pairs[0]
+        _, anchors2 = char_anchor_pairs[1]
+        replacements["ANCHOR_PATH"] = anchors1[0]
+        replacements["ANCHOR_PATH_2"] = anchors2[0]
+        replacements["WIDTH"] = settings.image_width
+        replacements["HEIGHT"] = settings.image_height
+    elif len(char_anchor_pairs) == 1:
+        _, anchors = char_anchor_pairs[0]
+        if len(anchors) >= 3:
+            workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
+            replacements["ANCHOR_PATH"] = anchors[0]
+            replacements["ANCHOR_PATH_2"] = anchors[1]
+            replacements["ANCHOR_PATH_3"] = anchors[2]
+        elif len(anchors) == 2:
+            workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
+            replacements["ANCHOR_PATH"] = anchors[0]
+            replacements["ANCHOR_PATH_2"] = anchors[1]
+        else:
+            workflow = "image_gen/workflows/txt2img_ipadapter.json"
+            replacements["ANCHOR_PATH"] = anchors[0]
+        replacements["WIDTH"] = settings.image_width
+        replacements["HEIGHT"] = settings.image_height
     else:
         workflow = "image_gen/workflows/txt2img_scene.json"
         replacements["WIDTH"] = settings.image_width
