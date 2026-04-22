@@ -552,6 +552,8 @@ def _build_shot_image_params(
     char_anchor_pairs: list,
     seed: int,
     artifact_hints_by_name: dict[str, list[str]] | None = None,
+    init_image_path: "Path | None" = None,
+    denoise: float = 0.70,
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
@@ -598,14 +600,20 @@ def _build_shot_image_params(
     if not char_anchor_pairs:
         neg += _SCENE_ANTI_PORTRAIT_NEG
 
-    workflow = "image_gen/workflows/txt2img_scene.json"
-    replacements = {
+    replacements: dict = {
         "SCENE_PROMPT": _compact_prompt_tags(", ".join(scene_prompt_parts), max_tags=24),
         "NEGATIVE_PROMPT": neg,
-        "WIDTH": settings.image_width,
-        "HEIGHT": settings.image_height,
         "SEED": seed,
     }
+
+    if init_image_path is not None:
+        workflow = "image_gen/workflows/img2img_scene.json"
+        replacements["INIT_IMAGE"] = init_image_path
+        replacements["DENOISE"] = denoise
+    else:
+        workflow = "image_gen/workflows/txt2img_scene.json"
+        replacements["WIDTH"] = settings.image_width
+        replacements["HEIGHT"] = settings.image_height
 
     return workflow, replacements
 
@@ -650,6 +658,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
         # Generate each frame for this shot
         frames = shot.frames if shot.frames else [None]
+        shot_frame0_path: "Path | None" = None  # fan-out: frames 1-3 all use frame-0 as init
         for fidx, frame in enumerate(frames):
             # Use frame-aware path when multi-frame, legacy path when single frame
             if len(frames) > 1:
@@ -662,6 +671,8 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                     "Image exists, skipping | episode={} shot={} frame={}",
                     episode_num, idx, fidx,
                 )
+                if fidx == 0:
+                    shot_frame0_path = output_path
                 continue
 
             # Use frame.scene_prompt (with camera_tag prepended) if available,
@@ -686,11 +697,17 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             else:
                 seed = episode_num * 10000 + idx * 100
 
+            # Frame 0 = txt2img; frames 1+ = img2img fan-out from frame-0.
+            # Fan-out (not chain) prevents artifact accumulation across the sequence.
+            init_path = shot_frame0_path if fidx > 0 else None
             workflow, replacements = _build_shot_image_params(
-                prompt_text, char_anchor_pairs, seed, artifact_hints_by_name
+                prompt_text, char_anchor_pairs, seed, artifact_hints_by_name,
+                init_image_path=init_path,
             )
 
             comfyui_client.generate_image(workflow, replacements, output_path)
+            if fidx == 0:
+                shot_frame0_path = output_path
             logger.info(
                 "Image generated | episode={} shot={} frame={} workflow={}",
                 episode_num, idx, fidx, Path(workflow).stem,

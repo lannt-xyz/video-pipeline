@@ -232,6 +232,12 @@ class OllamaClient:
 ollama_client = OllamaClient(json_format=settings.llm_json_format)
 # Phase-specific clients — model falls back to llm_model when the phase fields are empty.
 summary_client = OllamaClient(model=settings.effective_summary_model, json_format=settings.summary_json_format)
+# scene_prompt_client: used for ComfyUI scene_prompt narration-alignment rewrite pass.
+# Falls back to script_model → llm_model when scene_prompt_model is empty.
+scene_prompt_client = OllamaClient(
+    model=settings.effective_scene_prompt_model,
+    json_format=settings.scene_prompt_json_format,
+)
 
 
 def _github_retry_wait(retry_state) -> float:  # type: ignore[type-arg]

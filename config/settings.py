@@ -49,7 +49,8 @@ class Settings(BaseSettings):
     llm_model: str = "qwen2.5:7b-instruct-q8_0"
     # Phase-specific models (fall back to llm_model when empty)
     summary_model: str = ""   # used by summarizer & character_extractor
-    script_model: str = ""    # used by scriptwriter (scene_prompt / narration)
+    script_model: str = ""    # used by scriptwriter (narration_text generation)
+    scene_prompt_model: str = ""  # used by scriptwriter (ComfyUI scene_prompt rewrite pass); falls back to script_model
     llm_timeout: int = 120
 
     # GitHub Models API (for script/scene-prompt generation)
@@ -67,6 +68,7 @@ class Settings(BaseSettings):
     script_json_format: bool = True
     summary_json_format: bool = True  # set false for summary_model that ignores format:json
     llm_json_format: bool = True      # set false for llm_model that ignores format:json
+    scene_prompt_json_format: bool = True  # set false for scene_prompt_model that ignores format:json
     ollama_json_format: bool = True  # deprecated alias kept for backward-compat; prefer script_json_format
     comfyui_timeout: int = 300
     comfyui_poll_interval: int = 2
@@ -141,8 +143,13 @@ class Settings(BaseSettings):
 
     @property
     def effective_script_model(self) -> str:
-        """Model used for scriptwriting / scene-prompt generation phases."""
+        """Model used for scriptwriting / narration generation phases."""
         return self.script_model.strip() or self.llm_model
+
+    @property
+    def effective_scene_prompt_model(self) -> str:
+        """Model used for ComfyUI scene_prompt generation (narration-alignment rewrite pass)."""
+        return self.scene_prompt_model.strip() or self.effective_script_model
 
 
 settings = Settings()

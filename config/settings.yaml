@@ -10,14 +10,19 @@ ollama_url: "http://localhost:11434"
 comfyui_url: "http://localhost:8188"
 
 # LLM configuration gemma4-32k:latest
-llm_model: "gpt-oss:20b"
+llm_model: "llama3.1:8b"
 # Phase-specific model overrides (empty = use llm_model)
-summary_model: "gpt-oss:20b"
+summary_model: "llama3.1:8b"
 # qwen2.5:14b, mistral-small:22b, gpt-oss:20b
-script_model: "gpt-oss:20b"
+script_model: "llama3.1:8b"
 # Set false when script_model does not support Ollama constrained JSON decoding (e.g. gpt-oss family)
 # Only affects the script client — summary/other clients always use native format mode
 script_json_format: false
+# Model for ComfyUI scene_prompt generation (narration-alignment rewrite pass)
+# Empty = fall back to script_model
+scene_prompt_model: "mistral-nemo:12b"
+# Set false when scene_prompt_model does not support Ollama constrained JSON decoding
+scene_prompt_json_format: true
 # Set false when summary_model does not support Ollama constrained JSON decoding
 summary_json_format: false
 # Set false when llm_model does not support Ollama constrained JSON decoding

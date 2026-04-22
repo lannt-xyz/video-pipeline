@@ -8,6 +8,7 @@ from tenacity import RetryError, retry, retry_if_exception_type, stop_after_atte
 
 from config.settings import settings
 from llm.client import script_client as ollama_client
+from llm.client import scene_prompt_client
 from llm.summarizer import load_arc_overview
 from models.schemas import CameraFlow, EpisodeScript, ShotScript
 
@@ -508,7 +509,7 @@ def _rewrite_scene_prompts_from_narration(
         f"Shots:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
     try:
-        raw = ollama_client.generate_json(
+        raw = scene_prompt_client.generate_json(
             prompt=prompt, system=_NARRATION_ALIGN_SYSTEM, temperature=0.3
         )
     except Exception as exc:

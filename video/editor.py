@@ -406,7 +406,8 @@ def assemble_episode(
                 inp_sub.audio,
                 str(output_path),
                 vcodec="h264_nvenc",
-                acodec="copy",
+                acodec="aac",
+                audio_bitrate="192k",
                 video_bitrate="4000k",
                 r=settings.fps,
             )
