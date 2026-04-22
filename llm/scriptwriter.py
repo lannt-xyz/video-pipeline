@@ -34,12 +34,19 @@ CLIFFHANGER RULE — Shot 8 CRITICAL:
 - FORBIDDEN endings: resolved conclusions, CTA phrases ("theo dõi tiếp", "hãy chú ý"), full explanation of what happened.
 - RIGHT pattern: sentence cut before answer ("Và thứ hắn nhìn thấy trong quan tài... chính là—"), or open question ("Nhưng tại sao cô gái đó lại mỉm cười?").
 
-PACING RULE:
+PACING RULE — STRICTLY ENFORCED:
 - Shot 1 and Shot 2: duration_sec MUST be 2 or 3.
-- Shot 1 and Shot 2: narration_text MUST be 12 words or fewer — TTS must fit within 2–3 seconds.
-- Shots 3–8: duration_sec 6 for standard, 8 for climactic action.
-- Shots 3–8: narration_text MUST be 20–30 words (2–3 sentences) — TTS must fill 7–10 seconds each.
-- TOTAL narration_text across all 8 shots must produce at least 60 seconds of TTS. At ~3 words/second Vietnamese TTS (edge-tts vi-VN-HoaiMyNeural), that means at least 180 words total across all shots.
+- Shot 1 and Shot 2: narration_text MUST be 10 words or fewer — TTS must fit within 2–3 seconds.
+- Shots 3–8: duration_sec = 8 for standard shots, 10 for climactic action shots.
+- Shots 3–8: narration_text MUST be 25–35 words (2–4 sentences) — TTS must fill 8–11 seconds each.
+- TOTAL narration_text across ALL 8 shots MUST be at least 180 words. At ~3 words/second Vietnamese TTS (edge-tts vi-VN-HoaiMyNeural), that means at least 60 seconds of TTS.
+- COUNT YOUR WORDS before outputting each shot. If narration_text for shot 3–8 is fewer than 25 words, REWRITE IT.
+
+NARRATION LENGTH EXAMPLES:
+WRONG (too short for a 8s shot): "Lão đạo sĩ này sẽ mang Diệp Thiếu Dương về Mao Sơn để dạy nó đạo pháp." — 15 words, only ~5s TTS, leaves 3s of silence.
+RIGHT (correct length for a 8s shot): "Thanh Vân Tử nhìn thẳng vào mắt Diệp Đại Công, giọng trầm xuống: Đứa trẻ này có căn cơ không bình thường. Ta sẽ đưa hắn lên Mao Sơn, dạy đạo pháp, rèn chân thân. Nhưng đây là con đường không thể quay đầu." — 42 words, ~14s TTS. ✓
+WRONG (too short for a 9s shot): "Thi Du Cao là một loại độc thi được sử dụng trong cổ thuật." — 13 words, only ~4s TTS.
+RIGHT (correct length for a 9s shot): "Thanh Vân Tử chậm rãi giải thích: Thi Du Cao không phải là bệnh, mà là một loại thi độc từ cổ thuật. Nó xâm nhập vào thi thể người chết, khiến xác không thể phân hủy, và dần biến thành một thứ nguy hiểm hơn bất kỳ con quỷ nào ta từng gặp." — 47 words, ~16s TTS. ✓
 
 NARRATIVE RULES (most critical):
 - Each shot's narration_text tells what SPECIFICALLY happens — name the action, the character, the location.
@@ -123,7 +130,7 @@ REQUIRED in scene_prompt — USE ALL TAG POSITIONS FOR ACTUAL CONTENT:
 - Do NOT include "anime style", "manhua art style", "no text", "no watermarks", "sfw", "fully clothed" — these are added automatically
 
 OTHER RULES:
-- duration_sec: 2 or 3 for shots 1–2; 6 for standard shots, 8 for climactic action shots.
+- duration_sec: 2 or 3 for shots 1–2; 8 for standard shots 3-8, 10 for climactic action shots.
 - is_key_shot: Mark EXACTLY 2-3 shots as true — the most action-packed.
 - characters: CRITICAL — list the EXACT character names (from the provided Characters list) whose body, face, or silhouette is PHYSICALLY VISIBLE in the shot. If the scene_prompt describes only environment, objects, or atmosphere with NO human figure present, use []. DO NOT add a character just because they are the narrator or implied. MAXIMUM 2 characters per shot — never list 3 or more.
 
@@ -226,11 +233,28 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
         f"Write a video script for Episode {episode_num}.\n\n"
         f"Arc Overview:\n{arc_text}\n\n"
         "Remember: 8-10 shots, EXACTLY 2-3 with is_key_shot=true, "
-        "scene_prompt in English, narration_text in Vietnamese."
+        "scene_prompt in English, narration_text in Vietnamese.\n"
+        "CRITICAL: shots 3-8 MUST each have 25-35 words in narration_text. "
+        "Total narration_text across all shots MUST be at least 180 words."
     )
-    return ollama_client.generate_json(
+    result = ollama_client.generate_json(
         prompt=prompt, system=_SCRIPTWRITER_SYSTEM, temperature=0.7
     )
+    # Reject and retry if total narration is too short (LLM ignored the word-count rules).
+    shots = result.get("shots", [])
+    if isinstance(shots, list) and shots:
+        total_words = sum(
+            len(str(s.get("narration_text", "")).split())
+            for s in shots
+            if isinstance(s, dict)
+        )
+        if total_words < 150:
+            logger.warning(
+                "Script rejected: total_words={} < 150, retrying | episode={}",
+                total_words, episode_num,
+            )
+            raise ValueError(f"narration too short: {total_words} words")
+    return result
 
 
 _MAX_SHOTS_PER_EPISODE = 8  # shots that fit in one video; excess flows to next episode
@@ -698,6 +722,7 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     # 5. Normalize in correct order — all on episode_shots (not new_shots)
     episode_shots = _normalize_duration(episode_shots, episode_num)
     episode_shots = _normalize_hook_durations(episode_shots, episode_num)
+    episode_shots = _validate_narration_length(episode_shots, episode_num)
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
     episode_shots = _normalize_camera_flow(episode_shots, episode_num)
     episode_shots = _backfill_characters(episode_shots, arc.characters_in_episode, episode_num)
@@ -735,6 +760,32 @@ def load_episode_script(episode_num: int) -> EpisodeScript:
     if not script_path.exists():
         raise FileNotFoundError(f"Script not found for episode {episode_num}")
     return EpisodeScript(**json.loads(script_path.read_text(encoding="utf-8")))
+
+
+def _validate_narration_length(shots: List[ShotScript], episode_num: int) -> List[ShotScript]:
+    """Log warnings for shots 2+ whose narration is too short relative to duration_sec.
+
+    Rule: non-hook shots should have >= (duration_sec * 2.5) words.
+    At ~3 words/sec Vietnamese TTS, 2.5 gives ~83% audio fill — avoids dead-air silence.
+    Does NOT modify narration — this is a diagnostic/audit pass only.
+    """
+    total_words = sum(len(s.narration_text.split()) for s in shots)
+    logger.info(
+        "Narration word count | episode={} total_words={} (~{:.0f}s TTS)",
+        episode_num, total_words, total_words / 3.0,
+    )
+    for i, shot in enumerate(shots):
+        if i < 2:
+            continue  # Hook shots are exempt
+        words = len(shot.narration_text.split())
+        min_words = int(shot.duration_sec * 2.5)
+        if words < min_words:
+            logger.warning(
+                "Narration too short | episode={} shot={} words={} min={} duration={}s text={!r}",
+                episode_num, i, words, min_words, shot.duration_sec,
+                shot.narration_text[:80],
+            )
+    return shots
 
 
 def _normalize_duration(shots: List[ShotScript], episode_num: int) -> List[ShotScript]:

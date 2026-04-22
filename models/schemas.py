@@ -46,6 +46,7 @@ class ShotScript(BaseModel):
     camera_flow: CameraFlow = CameraFlow.WIDE_TO_CLOSE
     frames: List[FrameScript] = []  # populated by frame_decomposer, not LLM
     scene_id: Optional[str] = None  # shared across shots in the same physical location, e.g. "coffin_shop"
+    actual_audio_sec: Optional[float] = None  # probed from mixed audio file; used for subtitle timing only
 
 
 class EpisodeScript(BaseModel):

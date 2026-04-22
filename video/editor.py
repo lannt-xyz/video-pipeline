@@ -39,14 +39,28 @@ def _resolve_subtitle_padding() -> tuple[float, float]:
     return lead, tail
 
 
-def _speech_window(shot_start: float, shot_duration: float, lead: float, tail: float) -> tuple[float, float]:
+def _speech_window(
+    shot_start: float,
+    shot_duration: float,
+    lead: float,
+    tail: float,
+    actual_audio_sec: float | None = None,
+) -> tuple[float, float]:
     """Compute spoken interval within one shot timeline.
 
-    Subtitles should follow narration speech, not silence padding added to audio.
+    Uses actual_audio_sec (probed from mixed audio) when available so that
+    karaoke word timing tracks real TTS speech, not clip-level silence padding.
+    If actual_audio_sec is None or larger than shot_duration, falls back to
+    shot_duration (safe default).
     """
-    shot_end = shot_start + max(0.0, shot_duration)
-    speech_start = min(shot_end, shot_start + max(0.0, lead))
-    speech_end = min(shot_end, max(speech_start + 0.1, shot_end - max(0.0, tail)))
+    # Use whichever is smaller: script clip length, or actual mixed audio length.
+    # This prevents word timing from spanning silent/BGM-only portions of a clip.
+    effective_audio = shot_duration
+    if actual_audio_sec is not None and 0 < actual_audio_sec < shot_duration:
+        effective_audio = actual_audio_sec
+    audio_end = shot_start + effective_audio
+    speech_start = min(audio_end, shot_start + max(0.0, lead))
+    speech_end = min(audio_end, max(speech_start + 0.1, audio_end - max(0.0, tail)))
     return speech_start, speech_end
 
 
@@ -64,7 +78,8 @@ def generate_srt(shots: List[ShotScript], output_path: Path, intro_duration: flo
         shot_start = current_time
         shot_end = current_time + shot.duration_sec
         start, end = _speech_window(
-            shot_start, shot.duration_sec, lead_in_sec, tail_pad_sec
+            shot_start, shot.duration_sec, lead_in_sec, tail_pad_sec,
+            actual_audio_sec=shot.actual_audio_sec,
         )
         safe_text = sanitize_for_srt(shot.narration_text)
 
@@ -189,7 +204,8 @@ def generate_ass(shots: List[ShotScript], output_path: Path, intro_duration: flo
         shot_start = current_time
         shot_end = current_time + shot.duration_sec
         speech_start, speech_end = _speech_window(
-            shot_start, shot.duration_sec, lead_in_sec, tail_pad_sec
+            shot_start, shot.duration_sec, lead_in_sec, tail_pad_sec,
+            actual_audio_sec=shot.actual_audio_sec,
         )
         speech_duration = max(0.1, speech_end - speech_start)
         if not words:

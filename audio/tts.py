@@ -90,17 +90,27 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_TTS_CHARS) -> List[
 
 
 async def _tts_one_voice(text: str, voice: str, output_path: Path) -> None:
-    """Single TTS call with tenacity retry. Raises on all failures."""
+    """Single TTS call. On first failure, retries with WordBoundary (pre-7.2.0 default).
+    MS edge-tts server is intermittently rejecting SentenceBoundary requests (issue #473).
+    """
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(min=8, max=60),
         reraise=True,
     )
-    async def _attempt() -> None:
-        communicate = edge_tts.Communicate(text, voice)
+    async def _attempt(boundary: str) -> None:
+        communicate = edge_tts.Communicate(text, voice, boundary=boundary)
         await communicate.save(str(output_path))
 
-    await _attempt()
+    # First try with SentenceBoundary (current default in ≥7.2.0)
+    try:
+        await _attempt("SentenceBoundary")
+        return
+    except Exception:
+        pass
+
+    # Fallback: WordBoundary (default before 7.2.0, more stable during MS outages)
+    await _attempt("WordBoundary")
 
 
 async def _tts_chunked(text: str, voice: str, output_path: Path) -> None:
@@ -144,93 +154,98 @@ async def _tts_chunked(text: str, voice: str, output_path: Path) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+async def _generate_shot(
+    episode_num: int,
+    shot_index: int,
+    narration_text: str,
+    output_path: Path,
+    duration_sec: float,
+) -> Tuple[int, Path, bool]:
+    """Generate TTS for a single shot. Returns (index, path, is_silence)."""
+    raw_text = (narration_text or "").strip()
+    text = _sanitize_tts_text(raw_text)
+
+    if not text:
+        logger.warning(
+            "Empty narration after sanitize | shot={} raw={!r} — generating silence",
+            shot_index, raw_text[:120],
+        )
+        await _generate_silence(output_path, duration_sec)
+        return shot_index, output_path, True
+
+    # Log if text will be chunked
+    if len(text) > _MAX_TTS_CHARS:
+        n_chunks = len(_split_text_into_chunks(text))
+        logger.debug(
+            "narration_text will be split into {} chunks ({} chars) | episode={} shot={}",
+            n_chunks, len(text), episode_num, shot_index,
+        )
+
+    logger.debug(
+        "TTS request | shot={} voice={} chars={} text={!r}",
+        shot_index, _PRIMARY_VOICE, len(text), text[:80],
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        if attempt > 0:
+            # Longer cooldown — MS edge-tts server is intermittently flaky (issue #473)
+            await asyncio.sleep(15.0)
+        try:
+            await _tts_chunked(text, _PRIMARY_VOICE, output_path)
+            logger.debug(
+                "TTS ok | shot={} voice={} path={}", shot_index, _PRIMARY_VOICE, output_path
+            )
+            return shot_index, output_path, False
+        except Exception as exc:
+            logger.warning(
+                "TTS failed | shot={} attempt={} error={}", shot_index, attempt + 1, exc
+            )
+            last_exc = exc
+
+    logger.error(
+        "All TTS voices failed | shot={} — writing silence. last_error={}",
+        shot_index, last_exc,
+    )
+    await _generate_silence(output_path, duration_sec)
+    return shot_index, output_path, True
+
+
 async def generate_episode_tts(
     episode_num: int,
     shots: List[ShotScript],
-    max_concurrent: int = 3,
+    max_concurrent: int = 1,
 ) -> List[Path]:
-    """Generate TTS for all shots in an episode.
+    """Generate TTS for all shots in an episode, serial with inter-shot delay.
 
-    Returns list of audio paths in shot order. On per-shot failure (after all
-    voice retries), writes a silent MP3 so the pipeline never crashes.
-    Raises RuntimeError if ALL shots fall back to silence (indicates systemic failure).
+    edge-tts is a free Microsoft service — concurrent requests cause throttling
+    (NoAudioReceived). Serial execution with a short cooldown between shots is
+    reliable and fast enough for 8-10 shots per episode.
+    Returns list of audio paths in shot order.
+    Raises RuntimeError if ALL shots fall back to silence (systemic failure).
     """
     audio_dir = Path(settings.data_dir) / "audio" / f"episode-{episode_num:03d}"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    semaphore = asyncio.Semaphore(max_concurrent)
-    silence_shots: list[int] = []
+    # Inter-shot delay to avoid edge-tts throttling from back-to-back requests.
+    _INTER_SHOT_DELAY_SEC = 1.5
 
-    async def _generate_shot(
-        shot_index: int,
-        narration_text: str,
-        output_path: Path,
-        duration_sec: float,
-    ) -> Tuple[int, Path, bool]:
-        """Returns (index, path, is_silence)."""
-        raw_text = (narration_text or "").strip()
-        text = _sanitize_tts_text(raw_text)
+    results: list[Tuple[int, Path, bool]] = []
 
-        if not text:
-            logger.warning(
-                "Empty narration after sanitize | shot={} raw={!r} — generating silence",
-                shot_index, raw_text[:120],
-            )
-            await _generate_silence(output_path, duration_sec)
-            return shot_index, output_path, True
-
-        # Log if text will be chunked (not truncated)
-        if len(text) > _MAX_TTS_CHARS:
-            n_chunks = len(_split_text_into_chunks(text))
-            logger.debug(
-                "narration_text will be split into {} chunks ({} chars) | episode={} shot={}",
-                n_chunks, len(text), episode_num, shot_index,
-            )
-
-        logger.debug(
-            "TTS request | shot={} voice={} chars={} text={!r}",
-            shot_index, _PRIMARY_VOICE, len(text), text[:80],
-        )
-
-        async with semaphore:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            last_exc: Optional[Exception] = None
-            for attempt in range(3):
-                if attempt > 0:
-                    # Brief cooldown before retry to avoid back-to-back 429s
-                    await asyncio.sleep(5.0)
-                try:
-                    await _tts_chunked(text, _PRIMARY_VOICE, output_path)
-                    logger.debug(
-                        "TTS ok | shot={} voice={} path={}", shot_index, _PRIMARY_VOICE, output_path
-                    )
-                    return shot_index, output_path, False
-                except Exception as exc:
-                    logger.warning(
-                        "TTS failed | shot={} attempt={} error={}", shot_index, attempt + 1, exc
-                    )
-                    last_exc = exc
-
-            # All voices exhausted → write silence so the episode can finish
-            logger.error(
-                "All TTS voices failed | shot={} — writing silence. last_error={}",
-                shot_index, last_exc,
-            )
-            await _generate_silence(output_path, duration_sec)
-            return shot_index, output_path, True
-
-    tasks = [
-        _generate_shot(
+    for idx, shot in enumerate(shots):
+        if idx > 0:
+            await asyncio.sleep(_INTER_SHOT_DELAY_SEC)
+        result = await _generate_shot(
+            episode_num,
             idx,
             shot.narration_text,
             audio_dir / f"shot-{idx:02d}.mp3",
             float(getattr(shot, "duration_sec", 6)),
         )
-        for idx, shot in enumerate(shots)
-    ]
+        results.append(result)
 
-    results = await asyncio.gather(*tasks)
     results_sorted = sorted(results, key=lambda x: x[0])
 
     silence_shots = [idx for idx, _path, is_silence in results_sorted if is_silence]

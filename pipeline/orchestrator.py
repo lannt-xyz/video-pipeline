@@ -832,11 +832,13 @@ def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     # Patch duration_sec: use max(script, audio) so clips are never shorter than
     # the scriptwriter's budget.  If TTS finishes early the zoompan animation
     # continues (with silence); if TTS is longer the clip extends to fit.
+    # Also record actual_audio_sec so subtitle timing tracks real speech, not clip length.
     for shot, audio_path in zip(script.shots, audio_paths):
         if audio_path.exists():
             actual = _probe_duration(audio_path)
             if actual > 0:
                 shot.duration_sec = max(shot.duration_sec, actual)
+                shot.actual_audio_sec = actual
 
     db.record_phase_start(episode_num, "video")
 
