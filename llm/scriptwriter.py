@@ -423,6 +423,7 @@ FIELDS TO EXTRACT:
   If narration is PURELY environment/atmosphere with NO clear character action → use static pose or
     environment motion (e.g. "figure crouching motionless behind stone pillar", "leaves drifting through empty courtyard")
 - setting: Physical location with ONE visual detail. E.g. "dimly lit coffin shop with rows of dark wooden coffins"
+  MUST be a descriptive English phrase. NEVER use an identifier or slug (e.g. "dark_forest", "mountain_road" are FORBIDDEN — write "moonlit forest path with ancient stone graves" instead).
 - key_objects: List of specific props visible in the scene (max 4). Concrete nouns only.
   Example: ["glowing talisman paper", "ritual candles", "iron chains on wall"]
 - mood_lighting: MUST use format "light source + color palette + effect".
@@ -535,20 +536,26 @@ def _extract_visual_briefs(
 ) -> List[ShotScript]:
     """LLM extraction pass: convert narration_text to ShotVisualBrief for each shot.
 
-    Hook shots (index <= 1 or duration_sec <= 3) are skipped — their visual_brief
-    stays None. On full failure, returns shots unchanged so the caller can fallback.
+    Shots with duration_sec <= 2 are skipped — their visual_brief stays None.
+    3-second hook shots ARE processed so they receive proper English scene_prompts.
+    scene_id is NOT sent in the payload to prevent the LLM from copying the slug
+    into setting/composition fields.
+    On full failure, returns shots unchanged so the caller can fallback.
     """
     from models.schemas import ShotVisualBrief
 
-    # Build payload — skip hook shots.
+    # Build payload — skip only very-short shots (<=2s) that have too little narration
+    # to yield a useful brief.  3s hook shots ARE processed so they get an English
+    # ComfyUI prompt instead of whatever the LLM scriptwriter happened to produce.
+    # scene_id is intentionally NOT sent to prevent the LLM from cargo-culting the
+    # slug (e.g. "dark_forest") as the setting or composition value.
     payload = []
     for i, shot in enumerate(shots):
-        if i <= 1 or shot.duration_sec <= 3:
-            continue  # visual_brief stays None for hook shots
+        if shot.duration_sec <= 2:
+            continue  # visual_brief stays None for very-short shots
         payload.append({
             "shot_index": i,
             "narration_text": shot.narration_text,
-            "scene_id": shot.scene_id or "",
             "characters": shot.characters,
         })
 
@@ -597,13 +604,33 @@ def _extract_visual_briefs(
         if not isinstance(idx, int) or idx < 0 or idx >= len(shots):
             continue
         try:
+            setting_val = item.get("setting") or ""
+            composition_val = item.get("composition") or ""
+
+            # Guard: reject settings that look like identifier slugs (e.g. "dark_forest").
+            # The LLM must produce a descriptive phrase, not an internal ID.
+            if re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", setting_val.strip().lower()):
+                logger.warning(
+                    "Visual brief setting looks like a slug (%r) — skipping brief | episode={} shot={}",
+                    setting_val, episode_num, idx,
+                )
+                continue
+
+            # Guard: clear composition if it also looks like a slug.
+            if re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", composition_val.strip().lower()):
+                logger.warning(
+                    "Visual brief composition looks like a slug (%r) — clearing | episode={} shot={}",
+                    composition_val, episode_num, idx,
+                )
+                composition_val = ""
+
             brief = ShotVisualBrief(**{
                 "subjects": item.get("subjects") or [],
                 "action": item.get("action") or "",
-                "setting": item.get("setting") or "",
+                "setting": setting_val,
                 "key_objects": item.get("key_objects") or [],
                 "mood_lighting": item.get("mood_lighting") or "",
-                "composition": item.get("composition") or "",
+                "composition": composition_val,
             })
             shots[idx] = shots[idx].model_copy(update={"visual_brief": brief})
             populated += 1
