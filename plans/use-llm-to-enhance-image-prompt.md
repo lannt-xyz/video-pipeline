@@ -1,6 +1,7 @@
 ## Plan: Visual Brief Enrichment
 
-**Status**: Draft
+**Status**: Done ✓ — Implemented in branch `feature/visual-brief-enrichment`, commit `da8a596`
+See detailed plan & implementation summary: `plans/visual-brief-enrichment.md`
 
 ### Vấn đề gốc rễ
 
