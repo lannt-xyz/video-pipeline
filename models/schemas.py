@@ -35,6 +35,21 @@ class FrameScript(BaseModel):
     motion: MotionDirection = MotionDirection.ZOOM_IN
 
 
+class ShotVisualBrief(BaseModel):
+    """Structured visual description extracted by LLM from narration_text.
+
+    Used as an intermediate representation before synthesis into a ComfyUI
+    tag list. LLM only does extraction here; Python handles formatting.
+    """
+
+    subjects: List[str]        # role tags, max 2, no character names (e.g. "hooded daoist figure")
+    action: str                # specific observable action with verb + direction/result
+    setting: str               # physical location with visual detail
+    key_objects: List[str]     # foreground props, max 4
+    mood_lighting: str         # "light source + color palette + effect" format
+    composition: str = ""      # camera framing tag; empty → mapped from camera_flow
+
+
 class ShotScript(BaseModel):
     """Schema for a single shot in an episode script."""
 
@@ -47,6 +62,7 @@ class ShotScript(BaseModel):
     frames: List[FrameScript] = []  # populated by frame_decomposer, not LLM
     scene_id: Optional[str] = None  # shared across shots in the same physical location, e.g. "coffin_shop"
     actual_audio_sec: Optional[float] = None  # probed from mixed audio file; used for subtitle timing only
+    visual_brief: Optional[ShotVisualBrief] = None  # None for old scripts → synthesis skipped
 
 
 class EpisodeScript(BaseModel):

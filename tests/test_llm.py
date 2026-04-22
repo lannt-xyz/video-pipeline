@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from models.schemas import ArcOverview, EpisodeScript, ShotScript
+from models.schemas import ArcOverview, CameraFlow, EpisodeScript, ShotScript
 
 
 # ── OllamaClient ──────────────────────────────────────────────────────────────
@@ -445,3 +445,384 @@ class TestSchemas:
         reloaded = ArcOverview(**json.loads(arc.model_dump_json()))
         assert reloaded.episode_num == 5
         assert reloaded.key_events == ["e1"]
+
+
+# ── ShotVisualBrief Schema ─────────────────────────────────────────────────────
+
+class TestShotVisualBriefSchema:
+    def _make_brief(self, **kwargs):
+        from models.schemas import ShotVisualBrief
+
+        defaults = dict(
+            subjects=["hooded daoist figure"],
+            action="figure prying open stone coffin lid with iron crowbar",
+            setting="dimly lit coffin shop with rows of dark wooden coffins",
+            key_objects=["glowing talisman paper"],
+            mood_lighting="blood-red candle flame casting elongated shadows",
+            composition="medium close-up",
+        )
+        defaults.update(kwargs)
+        return ShotVisualBrief(**defaults)
+
+    def test_shot_script_backward_compat_no_visual_brief(self):
+        """Old JSON without visual_brief field should load without error."""
+        shot = ShotScript(
+            scene_prompt="test scene",
+            narration_text="lời dẫn",
+        )
+        assert shot.visual_brief is None
+
+    def test_shot_script_with_visual_brief(self):
+        from models.schemas import ShotVisualBrief
+
+        brief = self._make_brief()
+        shot = ShotScript(
+            scene_prompt="placeholder",
+            narration_text="lời dẫn",
+            visual_brief=brief,
+        )
+        assert shot.visual_brief is not None
+        assert shot.visual_brief.action.startswith("figure prying")
+
+    def test_episode_script_round_trip_with_visual_brief(self):
+        """Serialize and deserialize EpisodeScript with visual_brief embedded."""
+        from models.schemas import ShotVisualBrief
+
+        brief = self._make_brief()
+        shot = ShotScript(
+            scene_prompt="test scene",
+            narration_text="lời dẫn",
+            visual_brief=brief,
+        )
+        episode = EpisodeScript(episode_num=1, title="Test", shots=[shot] * 8)
+        reloaded = EpisodeScript(**json.loads(episode.model_dump_json()))
+        assert reloaded.shots[0].visual_brief is not None
+        assert reloaded.shots[0].visual_brief.composition == "medium close-up"
+
+    def test_shot_script_json_without_visual_brief_field_stays_none(self):
+        """Dict missing visual_brief key (old scripts) → visual_brief=None."""
+        data = {
+            "scene_prompt": "scene",
+            "narration_text": "narration",
+            "duration_sec": 6,
+            "is_key_shot": False,
+            "characters": [],
+        }
+        shot = ShotScript(**data)
+        assert shot.visual_brief is None
+
+
+# ── _synthesize_scene_prompt ───────────────────────────────────────────────────
+
+class TestSynthesizeScenePrompt:
+    def _make_brief(self, **kwargs):
+        from models.schemas import ShotVisualBrief
+
+        defaults = dict(
+            subjects=["hooded daoist figure", "kneeling young warrior"],
+            action="figure prying open stone coffin lid with iron crowbar",
+            setting="dimly lit coffin shop with rows of dark wooden coffins",
+            key_objects=["glowing talisman paper", "ritual candles", "iron chains on wall"],
+            mood_lighting="blood-red candle flame casting elongated shadows on stone wall",
+            composition="medium close-up",
+        )
+        defaults.update(kwargs)
+        return ShotVisualBrief(**defaults)
+
+    def _make_shot(self, **kwargs):
+        defaults = dict(
+            scene_prompt="placeholder",
+            narration_text="test narration",
+            duration_sec=8,
+            camera_flow=CameraFlow.WIDE_TO_CLOSE,
+        )
+        defaults.update(kwargs)
+        return ShotScript(**defaults)
+
+    def test_tag_order_composition_setting_action_mood_subjects(self):
+        from llm.scriptwriter import _synthesize_scene_prompt
+
+        brief = self._make_brief()
+        shot = self._make_shot()
+        result = _synthesize_scene_prompt(brief, shot)
+        tags = [t.strip() for t in result.split(",") if t.strip()]
+
+        # composition comes first when non-empty
+        assert tags[0] == "medium close-up"
+        # setting is second
+        assert "dimly lit coffin shop" in tags[1]
+        # action is third
+        assert "figure prying open stone coffin lid" in tags[2]
+
+    def test_mood_lighting_always_present(self):
+        from llm.scriptwriter import _synthesize_scene_prompt
+
+        brief = self._make_brief()
+        shot = self._make_shot()
+        result = _synthesize_scene_prompt(brief, shot)
+        assert "blood-red candle flame" in result
+
+    def test_key_objects_wrapped_with_weight(self):
+        from llm.scriptwriter import _synthesize_scene_prompt
+
+        brief = self._make_brief()
+        shot = self._make_shot()
+        result = _synthesize_scene_prompt(brief, shot)
+        assert "(glowing talisman paper:1.15)" in result
+        assert "(ritual candles:1.15)" in result
+
+    def test_key_object_dedup_with_setting(self):
+        """Object that appears in setting should not be added again."""
+        from llm.scriptwriter import _synthesize_scene_prompt
+
+        brief = self._make_brief(
+            setting="dimly lit coffin shop with rows of dark wooden coffins",
+            key_objects=["dark wooden coffins", "ritual candles"],  # first is substring of setting
+        )
+        shot = self._make_shot()
+        result = _synthesize_scene_prompt(brief, shot)
+        # "dark wooden coffins" is already in setting — should not get a duplicate wrapped tag
+        wrapped_dup = "(dark wooden coffins:1.15)"
+        assert wrapped_dup not in result
+        # second object should appear
+        assert "(ritual candles:1.15)" in result
+
+    def test_subject_not_duplicated_when_exact_phrase_in_action(self):
+        """Primary subject exact phrase in action → subject should not be appended again."""
+        from llm.scriptwriter import _synthesize_scene_prompt
+
+        brief = self._make_brief(
+            subjects=["figure"],  # exact word in action
+            action="figure prying open stone coffin lid with iron crowbar",
+        )
+        shot = self._make_shot()
+        result = _synthesize_scene_prompt(brief, shot)
+        # Count occurrences — "figure" appears in action; it should NOT be appended as a separate tag
+        tags = [t.strip() for t in result.split(",") if t.strip()]
+        # Subject "figure" is an exact substring of action → skip
+        standalone_figure = [t for t in tags if t == "figure"]
+        assert len(standalone_figure) == 0, "Subject already in action — should not be appended standalone"
+
+    def test_secondary_subject_dropped_when_budget_exhausted(self):
+        """With many key_objects filling the cap, secondary subject should be dropped."""
+        from llm.scriptwriter import _synthesize_scene_prompt, _SYNTHESIS_MAX_TAGS
+
+        # Create brief with enough key_objects to exhaust budget before secondary subject
+        brief = self._make_brief(
+            subjects=["primary figure", "secondary figure"],
+            key_objects=[f"object {i}" for i in range(10)],  # 10 objects
+            composition="",  # fewer never_drop tags → gives more room; still test that secondary can be dropped
+        )
+        shot = self._make_shot(camera_flow=CameraFlow.WIDE_TO_CLOSE)
+        result = _synthesize_scene_prompt(brief, shot)
+        tags = [t.strip() for t in result.split(",") if t.strip()]
+        assert len(tags) <= _SYNTHESIS_MAX_TAGS
+
+    def test_composition_mapped_from_camera_flow_when_empty(self):
+        """Empty composition → maps from camera_flow."""
+        from llm.scriptwriter import _synthesize_scene_prompt
+
+        brief = self._make_brief(composition="")
+        shot = self._make_shot(camera_flow=CameraFlow.STATIC_CLOSE)
+        result = _synthesize_scene_prompt(brief, shot)
+        # STATIC_CLOSE → "medium close-up"
+        assert result.startswith("medium close-up")
+
+    def test_no_composition_when_camera_flow_has_no_mapping(self):
+        """camera_flow=WIDE_TO_CLOSE has empty mapping → no composition tag added."""
+        from llm.scriptwriter import _synthesize_scene_prompt
+
+        brief = self._make_brief(composition="")
+        shot = self._make_shot(camera_flow=CameraFlow.WIDE_TO_CLOSE)
+        result = _synthesize_scene_prompt(brief, shot)
+        # Setting should be first tag
+        tags = [t.strip() for t in result.split(",") if t.strip()]
+        assert "dimly lit coffin shop" in tags[0]
+
+    def test_tag_count_within_cap(self):
+        from llm.scriptwriter import _synthesize_scene_prompt, _SYNTHESIS_MAX_TAGS
+
+        brief = self._make_brief()
+        shot = self._make_shot()
+        result = _synthesize_scene_prompt(brief, shot)
+        tags = [t.strip() for t in result.split(",") if t.strip()]
+        assert len(tags) <= _SYNTHESIS_MAX_TAGS
+
+
+# ── _extract_visual_briefs ─────────────────────────────────────────────────────
+
+class TestExtractVisualBriefs:
+    def _make_shots(self, n=8):
+        shots = []
+        for i in range(n):
+            duration = 3 if i <= 1 else 8
+            shots.append(ShotScript(
+                scene_prompt=f"scene {i}",
+                narration_text=f"Narration shot {i} with enough words here.",
+                duration_sec=duration,
+                characters=[],
+            ))
+        return shots
+
+    def test_hook_shots_keep_none_brief(self):
+        """Shots index 0-1 (duration ≤3) must stay visual_brief=None."""
+        from llm.scriptwriter import _extract_visual_briefs
+
+        shots = self._make_shots(8)
+        llm_response = [
+            {
+                "shot_index": i,
+                "subjects": ["figure"],
+                "action": f"figure doing action {i}",
+                "setting": f"location {i}",
+                "key_objects": [],
+                "mood_lighting": "dim candle light",
+                "composition": "",
+            }
+            for i in range(2, 8)  # only non-hook shots
+        ]
+
+        with patch("llm.scriptwriter.scene_prompt_client") as mock_client:
+            mock_client.generate_json.return_value = llm_response
+            result = _extract_visual_briefs(shots, episode_num=1)
+
+        assert result[0].visual_brief is None, "Shot 0 (hook) must keep visual_brief=None"
+        assert result[1].visual_brief is None, "Shot 1 (hook) must keep visual_brief=None"
+        for i in range(2, 8):
+            assert result[i].visual_brief is not None, f"Shot {i} should have visual_brief"
+
+    def test_non_list_response_returns_shots_unchanged(self):
+        """When LLM returns non-list, shots come back unchanged."""
+        from llm.scriptwriter import _extract_visual_briefs
+
+        shots = self._make_shots(4)
+        with patch("llm.scriptwriter.scene_prompt_client") as mock_client:
+            mock_client.generate_json.return_value = {"error": "bad response"}
+            result = _extract_visual_briefs(shots, episode_num=1)
+
+        assert all(s.visual_brief is None for s in result)
+
+    def test_partial_parse_failure_skips_bad_shot(self):
+        """If one shot's brief parse fails, skip it; others should still be populated."""
+        from llm.scriptwriter import _extract_visual_briefs
+
+        shots = self._make_shots(5)
+        # Provide valid brief for shot 2, invalid for shot 3, valid for shot 4
+        llm_response = [
+            {
+                "shot_index": 2,
+                "subjects": ["daoist figure"],
+                "action": "figure raising hand toward sky",
+                "setting": "ruined temple courtyard",
+                "key_objects": ["burning incense"],
+                "mood_lighting": "pale moonlight",
+                "composition": "",
+            },
+            {
+                "shot_index": 3,
+                # subjects=123 is truthy → `or []` doesn't coerce it → pydantic rejects list[str]=123
+                "subjects": 123,
+                "action": "some action",
+                "setting": "some setting",
+                "key_objects": [],
+                "mood_lighting": "dark",
+                "composition": "",
+            },
+            {
+                "shot_index": 4,
+                "subjects": ["warrior figure"],
+                "action": "figure sprinting toward gate with sword raised",
+                "setting": "dark stone corridor",
+                "key_objects": [],
+                "mood_lighting": "flickering torch light",
+                "composition": "wide establishing shot",
+            },
+        ]
+
+        with patch("llm.scriptwriter.scene_prompt_client") as mock_client:
+            mock_client.generate_json.return_value = llm_response
+            result = _extract_visual_briefs(shots, episode_num=1)
+
+        assert result[2].visual_brief is not None
+        assert result[3].visual_brief is None  # parse failed → skipped
+        assert result[4].visual_brief is not None
+
+    def test_llm_wrapped_in_dict_unwrapped(self):
+        """LLM response wrapped in dict key 'shots' should be unwrapped."""
+        from llm.scriptwriter import _extract_visual_briefs
+
+        shots = self._make_shots(4)
+        valid_brief = {
+            "shot_index": 2,
+            "subjects": ["figure"],
+            "action": "figure walking forward into fog",
+            "setting": "misty forest path",
+            "key_objects": [],
+            "mood_lighting": "cold pale moonlight",
+            "composition": "",
+        }
+        with patch("llm.scriptwriter.scene_prompt_client") as mock_client:
+            mock_client.generate_json.return_value = {"shots": [valid_brief]}
+            result = _extract_visual_briefs(shots, episode_num=1)
+
+        assert result[2].visual_brief is not None
+
+
+# ── _build_scene_prompts_from_narration ───────────────────────────────────────
+
+class TestBuildScenePromptsFromNarration:
+    def _make_shots(self, n=8):
+        shots = []
+        for i in range(n):
+            duration = 3 if i <= 1 else 8
+            shots.append(ShotScript(
+                scene_prompt=f"original scene {i}",
+                narration_text=f"Narration shot {i}.",
+                duration_sec=duration,
+                characters=[],
+            ))
+        return shots
+
+    def test_fallback_when_zero_briefs_populated(self):
+        """If _extract_visual_briefs returns 0 populated briefs, fallback to rewrite pass."""
+        from llm.scriptwriter import _build_scene_prompts_from_narration
+
+        shots = self._make_shots(4)
+
+        # Extract returns all shots unchanged (0 populated)
+        with (
+            patch("llm.scriptwriter._extract_visual_briefs", return_value=shots),
+            patch("llm.scriptwriter._rewrite_scene_prompts_from_narration",
+                  return_value=shots) as mock_rewrite,
+        ):
+            result = _build_scene_prompts_from_narration(shots, episode_num=1)
+
+        mock_rewrite.assert_called_once()
+        assert result == shots
+
+    def test_synthesis_called_when_briefs_populated(self):
+        """When extraction returns at least 1 brief, synthesis should run."""
+        from llm.scriptwriter import _build_scene_prompts_from_narration
+        from models.schemas import ShotVisualBrief
+
+        brief = ShotVisualBrief(
+            subjects=["figure"],
+            action="figure walking into temple",
+            setting="ancient temple gate",
+            key_objects=[],
+            mood_lighting="pale moonlight",
+            composition="",
+        )
+        shots = self._make_shots(4)
+        shots_with_brief = list(shots)
+        shots_with_brief[2] = shots_with_brief[2].model_copy(update={"visual_brief": brief})
+
+        with (
+            patch("llm.scriptwriter._extract_visual_briefs", return_value=shots_with_brief),
+            patch("llm.scriptwriter._synthesize_scene_prompts_from_briefs",
+                  return_value=shots_with_brief) as mock_synth,
+        ):
+            _build_scene_prompts_from_narration(shots, episode_num=1)
+
+        mock_synth.assert_called_once()
+

@@ -398,6 +398,306 @@ _PROMPT_SKIP_TAGS: frozenset[str] = frozenset([
     "no characters in foreground",
 ])
 
+# --------------------------------------------------------------------------- #
+#  Visual Brief Enrichment — extraction prompt                                #
+# --------------------------------------------------------------------------- #
+_VISUAL_BRIEF_SYSTEM = """You are a visual director for a Vietnamese horror/supernatural short video.
+You receive a batch of shot descriptions. For each shot you will extract structured visual information
+from the narration_text, which is in Vietnamese.
+
+YOUR TASK: For each shot, extract a structured visual brief that a Python script will use to
+build a ComfyUI tag list. You are NOT writing tags — you are extracting semantic meaning.
+
+FIELDS TO EXTRACT:
+- subjects: List of role tags (max 2). Must be generic roles, NOT character names.
+  subjects[0] MUST be the PRIMARY subject (the one performing the action).
+  Example: ["hooded daoist figure", "kneeling young warrior"]
+- action: ONE specific, observable physical action. Must contain a concrete verb + direction/result.
+  GOOD: "figure prying open stone coffin lid with iron crowbar"
+  GOOD: "figure turning head sharply toward distant sound"
+  GOOD: "elder figure slamming fist onto wooden table"
+  BAD: "performing ritual", "looking around", "standing", "mysterious gesture", "conducting ceremony"
+  BLACKLIST — NEVER use these words in action: ritual, ceremony, pose, scene, performing, conducting
+  If narration describes DISCOVERY ("nhìn thấy", "phát hiện") → action = the revealing moment
+  If narration describes ACCUSATION ("chỉ mặt", "buộc tội") → action = accusatory gesture with outstretched arm
+  If narration is PURELY environment/atmosphere with NO clear character action → use static pose or
+    environment motion (e.g. "figure crouching motionless behind stone pillar", "leaves drifting through empty courtyard")
+- setting: Physical location with ONE visual detail. E.g. "dimly lit coffin shop with rows of dark wooden coffins"
+- key_objects: List of specific props visible in the scene (max 4). Concrete nouns only.
+  Example: ["glowing talisman paper", "ritual candles", "iron chains on wall"]
+- mood_lighting: MUST use format "light source + color palette + effect".
+  GOOD: "dim amber candle light, teal shadow palette, volumetric fog drifting along floor"
+  GOOD: "cold blue moonlight, deep violet shadows, mist creeping along stone floor"
+  BAD: "spooky lighting", "dark atmosphere", "dramatic light"
+  This MUST be horror-appropriate. No warm sunlight unless narration explicitly describes daytime safety.
+- composition: Camera framing tag if obvious from narration. Otherwise leave empty string "".
+  Examples: "medium close-up", "wide establishing shot", "medium shot"
+
+INPUT FORMAT: JSON array of shots, each with: shot_index, narration_text, scene_id, characters
+
+OUTPUT FORMAT: JSON array, same length as input, same order:
+[{"shot_index": 0, "subjects": [...], "action": "...", "setting": "...", "key_objects": [...], "mood_lighting": "...", "composition": ""}]
+
+CRITICAL: Return ONLY the JSON array, no markdown, no explanation."""
+
+# Map camera_flow values to composition tags when brief.composition is empty.
+_CAMERA_FLOW_TO_COMPOSITION: dict[str, str] = {
+    "static_close": "medium close-up",
+    "detail_reveal": "medium close-up",
+    "static_wide": "wide establishing shot",
+    "wide_to_close": "",
+    "close_to_wide": "",
+    "pan_across": "",
+}
+
+# Tags in synthesized prompts are capped at this count to leave buffer for
+# rule-based _align_scene_prompt_with_narration() pass.
+_SYNTHESIS_MAX_TAGS = 16
+
+
+def _subject_already_in_action(subject: str, action: str) -> bool:
+    """Check if the exact subject phrase is a substring of the action string."""
+    return subject.lower().strip() in action.lower()
+
+
+def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
+    """Deterministic Python synthesis of a ComfyUI tag list from a visual brief.
+
+    Tag order: [composition+setting] → [action] → [key_objects] → [mood_lighting] → [subjects]
+    Caps at _SYNTHESIS_MAX_TAGS with priority-based dropping.
+    No LLM involved.
+    """
+    from models.schemas import ShotVisualBrief  # local import avoids circular at module-level
+
+    # Resolve composition from brief or map from camera_flow.
+    composition = brief.composition.strip()
+    if not composition:
+        composition = _CAMERA_FLOW_TO_COMPOSITION.get(shot.camera_flow.value, "")
+
+    # Build ordered candidate tag groups (by priority).
+    # Priority: action > setting > subjects[0] > mood_lighting > key_objects > subjects[1]
+    # These first four are NEVER dropped.
+    never_drop: list[str] = []
+    if composition:
+        never_drop.append(composition)
+    never_drop.append(brief.setting)
+    never_drop.append(brief.action)
+
+    # Primary subject — never drop.
+    primary_subject = brief.subjects[0] if brief.subjects else ""
+    if primary_subject and not _subject_already_in_action(primary_subject, brief.action):
+        never_drop.append(primary_subject)
+
+    never_drop.append(brief.mood_lighting)
+
+    # Key objects — deduplicated against setting, wrapped with weight.
+    setting_lower = brief.setting.lower()
+    key_object_tags: list[str] = []
+    for obj in brief.key_objects[:4]:
+        obj = obj.strip()
+        if not obj:
+            continue
+        if obj.lower() in setting_lower:
+            continue  # already represented in setting
+        key_object_tags.append(f"({obj}:1.15)")
+
+    # Secondary subject — can be dropped when budget exhausted.
+    secondary_subject = ""
+    if len(brief.subjects) > 1:
+        sub = brief.subjects[1].strip()
+        if sub and not _subject_already_in_action(sub, brief.action):
+            secondary_subject = sub
+
+    # Fill up to _SYNTHESIS_MAX_TAGS.
+    tags: list[str] = list(never_drop)
+    remaining = _SYNTHESIS_MAX_TAGS - len(tags)
+
+    for obj_tag in key_object_tags:
+        if remaining <= 0:
+            break
+        tags.append(obj_tag)
+        remaining -= 1
+
+    if secondary_subject and remaining > 0:
+        tags.append(secondary_subject)
+
+    return ", ".join(t for t in tags if t)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=5),
+    retry=retry_if_exception_type((json.JSONDecodeError, ValueError)),
+)
+def _extract_visual_briefs(
+    shots: List[ShotScript],
+    episode_num: int,
+) -> List[ShotScript]:
+    """LLM extraction pass: convert narration_text to ShotVisualBrief for each shot.
+
+    Hook shots (index <= 1 or duration_sec <= 3) are skipped — their visual_brief
+    stays None. On full failure, returns shots unchanged so the caller can fallback.
+    """
+    from models.schemas import ShotVisualBrief
+
+    # Build payload — skip hook shots.
+    payload = []
+    for i, shot in enumerate(shots):
+        if i <= 1 or shot.duration_sec <= 3:
+            continue  # visual_brief stays None for hook shots
+        payload.append({
+            "shot_index": i,
+            "narration_text": shot.narration_text,
+            "scene_id": shot.scene_id or "",
+            "characters": shot.characters,
+        })
+
+    if not payload:
+        logger.debug("No eligible shots for visual brief extraction | episode={}", episode_num)
+        return shots
+
+    prompt = (
+        f"Extract visual briefs for Episode {episode_num} shots.\n\n"
+        f"Shots:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+    try:
+        raw = scene_prompt_client.generate_json(
+            prompt=prompt, system=_VISUAL_BRIEF_SYSTEM, temperature=0.3
+        )
+    except Exception as exc:
+        logger.warning(
+            "Visual brief extraction LLM call failed ({}) | episode={}", exc, episode_num
+        )
+        return shots
+
+    if not isinstance(raw, list):
+        if isinstance(raw, dict):
+            for key in ("shots", "briefs", "result", "items"):
+                if isinstance(raw.get(key), list):
+                    raw = raw[key]
+                    break
+        if not isinstance(raw, list):
+            logger.warning(
+                "Visual brief extraction returned non-list (type={}) | episode={}",
+                type(raw).__name__, episode_num,
+            )
+            return shots
+
+    shots = list(shots)
+    populated = 0
+    empty_action = 0
+    empty_objects = 0
+    empty_mood = 0
+
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("shot_index")
+        if not isinstance(idx, int) or idx < 0 or idx >= len(shots):
+            continue
+        try:
+            brief = ShotVisualBrief(**{
+                "subjects": item.get("subjects") or [],
+                "action": item.get("action") or "",
+                "setting": item.get("setting") or "",
+                "key_objects": item.get("key_objects") or [],
+                "mood_lighting": item.get("mood_lighting") or "",
+                "composition": item.get("composition") or "",
+            })
+            shots[idx] = shots[idx].model_copy(update={"visual_brief": brief})
+            populated += 1
+
+            # Track quality metrics.
+            if not brief.action:
+                empty_action += 1
+            if not brief.key_objects:
+                empty_objects += 1
+            if not brief.mood_lighting:
+                empty_mood += 1
+
+            logger.debug(
+                "Visual brief extracted | episode={} shot={} action={!r} objects={} mood={!r}",
+                episode_num, idx, brief.action[:60], brief.key_objects, brief.mood_lighting[:60],
+            )
+
+            if not brief.action:
+                logger.warning(
+                    "Visual brief has empty action | episode={} shot={}", episode_num, idx
+                )
+            if not brief.key_objects:
+                logger.warning(
+                    "Visual brief has empty key_objects | episode={} shot={}", episode_num, idx
+                )
+            if not brief.mood_lighting:
+                logger.warning(
+                    "Visual brief has empty mood_lighting | episode={} shot={}", episode_num, idx
+                )
+
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse ShotVisualBrief for shot={} ({}) — skipping | episode={}",
+                idx, exc, episode_num,
+            )
+
+    logger.info(
+        "Visual brief quality | episode={} populated={} empty_action={} empty_objects={} empty_mood={}",
+        episode_num, populated, empty_action, empty_objects, empty_mood,
+    )
+    return shots
+
+
+def _synthesize_scene_prompts_from_briefs(
+    shots: List[ShotScript],
+    episode_num: int,
+) -> List[ShotScript]:
+    """Iterate all shots; synthesize scene_prompt from visual_brief when available.
+
+    Shots with visual_brief=None keep their existing scene_prompt unchanged.
+    """
+    shots = list(shots)
+    synthesized = 0
+    for i, shot in enumerate(shots):
+        if shot.visual_brief is None:
+            continue
+        old_prompt = shot.scene_prompt
+        new_prompt = _synthesize_scene_prompt(shot.visual_brief, shot)
+        shots[i] = shot.model_copy(update={"scene_prompt": new_prompt})
+        synthesized += 1
+        logger.debug(
+            "scene_prompt synthesized | episode={} shot={} old={!r} new={!r}",
+            episode_num, i, old_prompt[:80], new_prompt[:80],
+        )
+
+    logger.info(
+        "Visual brief synthesis done | episode={} synthesized={}/{}",
+        episode_num, synthesized, len(shots),
+    )
+    return shots
+
+
+def _build_scene_prompts_from_narration(
+    shots: List[ShotScript],
+    episode_num: int,
+) -> List[ShotScript]:
+    """Two-pass replacement for _rewrite_scene_prompts_from_narration.
+
+    Pass 1: LLM extraction — narration_text → ShotVisualBrief (structured semantics)
+    Pass 2: Python synthesis — ShotVisualBrief → ComfyUI tag list (no LLM)
+
+    Falls back to _rewrite_scene_prompts_from_narration() if extraction yields 0 briefs.
+    """
+    shots = _extract_visual_briefs(shots, episode_num)
+    populated = sum(1 for s in shots if s.visual_brief is not None)
+    if populated == 0:
+        logger.warning(
+            "Visual brief extraction yielded 0 results — falling back to rewrite pass | episode={}",
+            episode_num,
+        )
+        return _rewrite_scene_prompts_from_narration(shots, episode_num)
+    return _synthesize_scene_prompts_from_briefs(shots, episode_num)
+
+
 # Location markers — used to identify the single "place" tag in a prompt.
 _LOCATION_MARKERS: tuple[str, ...] = (
     "shop", "temple", "pit", "courtyard", "cave", "room", "forest",
@@ -726,8 +1026,8 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
     episode_shots = _normalize_camera_flow(episode_shots, episode_num)
     episode_shots = _backfill_characters(episode_shots, arc.characters_in_episode, episode_num)
-    # LLM rewrite: scene_prompt must depict what narration_text says (WHO/ACTION/OBJECT/WHERE)
-    episode_shots = _rewrite_scene_prompts_from_narration(episode_shots, episode_num)
+    # Two-pass: LLM extraction (narration → brief) + Python synthesis (brief → tags)
+    episode_shots = _build_scene_prompts_from_narration(episode_shots, episode_num)
     # Rule-based layer: inject specific artifact/object tags that LLM might miss
     episode_shots = _align_scene_prompt_with_narration(episode_shots, episode_num)
     # Deterministic continuity: enforce shared location+lighting within each scene_id group
