@@ -240,7 +240,10 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
     result = ollama_client.generate_json(
         prompt=prompt, system=_SCRIPTWRITER_SYSTEM, temperature=0.7
     )
-    # Reject and retry if total narration is too short (LLM ignored the word-count rules).
+    # Reject and retry if total narration is severely short (LLM output is broken/empty).
+    # Threshold 80 catches truly degenerate outputs while allowing the model to produce
+    # somewhat shorter scripts when the arc content is genuinely thin.
+    # Outputs between 80–150 words are accepted with a WARNING for visibility.
     shots = result.get("shots", [])
     if isinstance(shots, list) and shots:
         total_words = sum(
@@ -248,12 +251,17 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
             for s in shots
             if isinstance(s, dict)
         )
-        if total_words < 150:
+        if total_words < 80:
             logger.warning(
-                "Script rejected: total_words={} < 150, retrying | episode={}",
+                "Script rejected: total_words={} < 80, retrying | episode={}",
                 total_words, episode_num,
             )
             raise ValueError(f"narration too short: {total_words} words")
+        if total_words < 150:
+            logger.warning(
+                "Script accepted but narration is short: total_words={} < 150 | episode={}",
+                total_words, episode_num,
+            )
     return result
 
 
