@@ -442,6 +442,11 @@ _NEGATIVE_BASE = (
     # Dangerous soft tags that PonyXL associates with NSFW
     "alluring, seductive, suggestive, provocative, erotic, sensual, "
     "bedroom eyes, revealing outfit, "
+    # Flat / boring composition block — kills retention for horror shorts
+    "(flat composition:1.4), (boring pose:1.4), (stock photo pose:1.4), "
+    "(centered standing figure:1.3), (neutral expression:1.3), (empty scene:1.3), "
+    "(generic portrait:1.3), (plain background:1.2), (static pose:1.2), "
+    "bright daylight, cheerful atmosphere, warm sunlight, high key lighting, "
     # PonyDiffusion quality anti-tags
     "score_1, score_2, score_3, score_4, score_5, "
     # Text / watermark — prevents manga SFX, speech bubbles, captions
@@ -559,6 +564,7 @@ def _build_shot_image_params(
     artifact_hints_by_name: dict[str, list[str]] | None = None,
     init_image_path: "Path | None" = None,
     denoise: float = 0.50,
+    shot_subject: str = "person_action",
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
@@ -570,7 +576,13 @@ def _build_shot_image_params(
 
     SCENE_PROMPT contains ONLY visual content (location, action, objects, mood).
     Metadata tags (sfw, anime style, etc.) live in the workflow CLIP suffix.
+
+    shot_subject: when not "person_action"/"environment", the shot is a shock
+    close-up (corpse_face / wound / bloody_object / supernatural_entity /
+    ritual_object). In that case we must NOT inject wide-framing tags nor
+    negative-block close-ups.
     """
+    wants_closeup = shot_subject not in ("person_action", "environment")
     has_female = any(c is not None and c.gender == "female" for c, _ in char_anchor_pairs)
     negative_base = (
         _NEGATIVE_BASE + ", (male:1.5), (masculine:1.3), 1boy"
@@ -601,13 +613,18 @@ def _build_shot_image_params(
 
     scene_prompt_parts = [p for p in [scene_text, artifact_detail_tags, gender_tags] if p]
 
-    # Prepend framing tags for scene-only (no character) shots.
-    if not char_anchor_pairs:
+    # Prepend framing tags for scene-only (no character) shots — EXCEPT when
+    # the shot_subject demands a close-up (corpse/wound/blood/entity/object).
+    # Wide-framing tags would fight against the intended extreme close-up.
+    if not char_anchor_pairs and not wants_closeup:
         if _SCENE_FRAMING_TAGS not in (scene_prompt_parts[0] if scene_prompt_parts else ""):
             scene_prompt_parts.insert(0, _SCENE_FRAMING_TAGS)
 
     neg = negative_base + _ANTI_SPLIT_SINGLE
-    if not char_anchor_pairs:
+    if not char_anchor_pairs and not wants_closeup:
+        # Block close-ups only when the shot is genuinely scene-only (environment
+        # or person_action with no resolved chars). For subject close-ups we
+        # explicitly WANT extreme close-up framing.
         neg += _SCENE_ANTI_PORTRAIT_NEG
 
     replacements: dict = {
@@ -689,10 +706,14 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     db.record_phase_start(episode_num, "images")
 
     for idx, shot in enumerate(script.shots):
+        # shot_subject=non-person forces scene-only workflow regardless of
+        # whatever characters list happens to contain — the visual hero is
+        # the corpse/wound/blood/entity/object, NOT a person standing next to it.
+        subject_is_person = shot.shot_subject.value in ("person_action",)
         # Short-circuit: empty characters → scene-only workflow, skip anchor resolution
         char_anchor_pairs = (
             []
-            if not shot.characters
+            if (not shot.characters or not subject_is_person)
             else _resolve_char_anchor_pairs(shot.characters, characters_map)
         )
 
@@ -739,6 +760,7 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
             workflow, replacements = _build_shot_image_params(
                 prompt_text, char_anchor_pairs, seed, artifact_hints_by_name,
+                shot_subject=shot.shot_subject.value,
             )
 
             comfyui_client.generate_image(workflow, replacements, output_path)
@@ -1081,12 +1103,13 @@ def probe_images(episode_num: int, gen_shots: int = 0) -> None:
 
         char_anchor_pairs = (
             []
-            if not shot.characters
+            if (not shot.characters or shot.shot_subject.value != "person_action")
             else _resolve_char_anchor_pairs(shot.characters, characters_map)
         )
         seed = episode_num * 10000 + idx * 100
         workflow, replacements = _build_shot_image_params(
-            shot.scene_prompt, char_anchor_pairs, seed
+            shot.scene_prompt, char_anchor_pairs, seed,
+            shot_subject=shot.shot_subject.value,
         )
 
         comfyui_client.generate_image(workflow, replacements, out)

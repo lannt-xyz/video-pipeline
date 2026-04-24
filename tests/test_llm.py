@@ -263,12 +263,17 @@ class TestScriptwriter:
             characters_in_episode=["Diep Thieu Duong"],
         )
 
+        # 20 words per narration × 8 shots = 160 words — passes the 80-word minimum.
+        long_narration = (
+            "Đây là một đoạn lời dẫn đủ dài để vượt qua ngưỡng kiểm tra "
+            "tối thiểu của scriptwriter trong pipeline."
+        )
         mock_raw = {
             "title": "Tập 1: Khởi Đầu",
             "shots": [
                 {
                     "scene_prompt": f"Scene {i} anime style 9:16",
-                    "narration_text": f"Lời dẫn {i}",
+                    "narration_text": long_narration,
                     "duration_sec": 6,
                     "is_key_shot": i < 2,
                     "characters": [],
@@ -280,9 +285,13 @@ class TestScriptwriter:
         with (
             patch("llm.scriptwriter.load_arc_overview", return_value=arc),
             patch("llm.scriptwriter.ollama_client") as mock_llm,
+            patch("llm.scriptwriter.scene_prompt_client") as mock_scene_llm,
             patch("llm.scriptwriter.settings") as mock_settings,
         ):
             mock_llm.generate_json.return_value = mock_raw
+            # Downstream passes (visual_brief, character resolve, scene align) all
+            # expect JSON arrays; returning [] makes each pass no-op / fallback.
+            mock_scene_llm.generate_json.return_value = []
             mock_settings.data_dir = str(tmp_path)
             mock_settings.llm_max_retries = 3
             mock_settings.target_duration_sec = 60
@@ -305,7 +314,10 @@ class TestScriptwriter:
         )
         shot_dict = {
             "scene_prompt": "ruined shrine, fog",
-            "narration_text": "Lời dẫn cảnh đầu.",
+            "narration_text": (
+                "Đây là một đoạn lời dẫn đủ dài để vượt qua ngưỡng kiểm tra "
+                "tối thiểu của scriptwriter trong pipeline."
+            ),
             "duration_sec": 6,
             "is_key_shot": False,
             "characters": [],
@@ -319,9 +331,11 @@ class TestScriptwriter:
         with (
             patch("llm.scriptwriter.load_arc_overview", return_value=arc),
             patch("llm.scriptwriter.ollama_client") as mock_llm,
+            patch("llm.scriptwriter.scene_prompt_client") as mock_scene_llm,
             patch("llm.scriptwriter.settings") as mock_settings,
         ):
             mock_llm.generate_json.return_value = mock_raw
+            mock_scene_llm.generate_json.return_value = []
             mock_settings.data_dir = str(tmp_path)
             mock_settings.llm_max_retries = 3
             mock_settings.target_duration_sec = 60
@@ -388,7 +402,7 @@ class TestScriptwriter:
         # Weak generic pose tag must be replaced
         assert "figure performing ritual" not in prompt
         # Object tag (coffin) should also be appended
-        assert "red lacquered coffin" in prompt
+        assert "red lacquered wooden coffin" in prompt
 
     def test_align_action_tag_inserted_before_background_not_at_end(self):
         from llm.scriptwriter import _align_scene_prompt_with_narration
@@ -520,12 +534,15 @@ class TestSynthesizeScenePrompt:
 
         defaults = dict(
             subjects=["hooded daoist figure", "kneeling young warrior"],
-            action="figure prying open stone coffin lid with iron crowbar",
+            actions=["figure prying open stone coffin lid with iron crowbar"],
             setting="dimly lit coffin shop with rows of dark wooden coffins",
             key_objects=["glowing talisman paper", "ritual candles", "iron chains on wall"],
             mood_lighting="blood-red candle flame casting elongated shadows on stone wall",
             composition="medium close-up",
         )
+        # Back-compat: allow callers to pass `action="..."` singular.
+        if "action" in kwargs:
+            kwargs["actions"] = [kwargs.pop("action")]
         defaults.update(kwargs)
         return ShotVisualBrief(**defaults)
 

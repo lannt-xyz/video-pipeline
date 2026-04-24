@@ -68,7 +68,7 @@
   "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, traditional chinese rural setting, east asian visual aesthetic, sfw, fully clothed, anime style, cinematic volumetric lighting, eerie unsettling atmosphere, ominous shadows creeping, masterpiece, best quality, highly detailed, cinematic, dark atmosphere, eerie mood, horror tone, no text, no watermarks",
+      "text": "__SCENE_PROMPT__, traditional chinese rural setting, east asian visual aesthetic, sfw, fully clothed, cinematic dark anime horror style, volumetric fog, desaturated cold palette, high contrast chiaroscuro lighting, film grain, shallow depth of field, intricate details, masterpiece, best quality, highly detailed, cinematic, dark atmosphere, eerie mood, horror tone, no text, no watermarks",
       "clip": [
         "4",
         1

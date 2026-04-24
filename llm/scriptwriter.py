@@ -115,7 +115,28 @@ FORBIDDEN in scene_prompt:
 - Adverbs or qualifiers ("mysteriously", "fiercely", "inadvertently")
 - NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, skinny, undressing, erotic, sensual, bedroom eyes
 - Generic placeholder tags: "dramatic lighting", "detailed background", "action pose", "fight scene" — be SPECIFIC
-- Extreme close-up framing tags: "extreme close-up", "extreme close-up detail", "face close-up", "macro shot" — these erase background context entirely. Use "medium close-up", "medium shot", or "wide shot" instead
+- Flat/boring composition tags: "figure standing next to coffin", "character posing", "centered portrait" — these produce stock-photo dead frames. Choose a dramatic angle.
+
+SHOT_SUBJECT — CRITICAL for retention (shock-first visual hero):
+Each shot MUST declare a shot_subject that tells the image generator WHAT THE CAMERA FOCUSES ON.
+Allowed values: "person_action" | "corpse_face" | "wound" | "bloody_object" | "supernatural_entity" | "ritual_object" | "environment"
+
+MANDATORY RULES:
+- If narration contains ANY of: xác, thi thể, tử thi, thây, xác chết, mắt trợn, mắt mở to, trắng bệch, trắng nhợt, tái mét — shot_subject = "corpse_face" and scene_prompt opens with "extreme close-up of pale dead face" or "macro shot of wide staring dead eyes".
+- If narration contains: vết cắn, vết thương, máu chảy, rách da, dấu răng, cào xé — shot_subject = "wound" and scene_prompt opens with "macro shot of [wound] on [body part]".
+- If narration centers on: dao đẫm máu, kiếm dính máu, bùa cháy, talisman burning, object covered in blood — shot_subject = "bloody_object" and scene_prompt opens with "extreme close-up of [object]".
+- If narration describes: ma, quỷ, hồn, vong, thi biến, bị nhập, hiện hình, possession, spirit manifest — shot_subject = "supernatural_entity" and scene_prompt opens with "low angle shot of ghostly figure emerging from mist" or similar.
+- If narration describes a pure atmosphere/location with no human and no shock object — shot_subject = "environment".
+- Otherwise — shot_subject = "person_action".
+
+FRAMING BY shot_subject — scene_prompt structure:
+- corpse_face / wound: MUST use "extreme close-up" or "macro shot" at the start. Characters list MUST be []. NO "figure standing" — the face/wound IS the subject.
+- bloody_object / ritual_object: MUST open with "extreme close-up" or "close-up detail shot". Characters list MUST be []. Hands holding the object are allowed but not a full person.
+- supernatural_entity: MUST open with "low angle shot" or "silhouette through fog" — no standard medium close-up. Characters list MUST be [].
+- environment: wide shot, no human. Characters list MUST be [].
+- person_action: existing rules apply (medium/wide with figure performing action).
+
+These close-up framings (extreme close-up, macro shot, detail shot) are REQUIRED for shock shots — they are the whole point of horror retention. Do NOT default to "medium close-up" or "wide shot" for corpse/wound/blood shots.
 
 CLOTHING SAFETY:
 - FORBIDDEN: bare skin, exposed midriff, cleavage, tight clothing, suggestive poses.
@@ -129,10 +150,15 @@ REQUIRED in scene_prompt — USE ALL TAG POSITIONS FOR ACTUAL CONTENT:
 - At least 1 specific lighting description
 - Do NOT include "anime style", "no text", "no watermarks", "sfw", "fully clothed" — these are added automatically
 
+HOOK SHOT_SUBJECT PRIORITY:
+- Shot 1 and Shot 2 (hook) SHOULD prefer a shock-forward shot_subject (corpse_face, wound, bloody_object, supernatural_entity) whenever narration allows it. A hook of "person_action" is permitted only when the first scene has NO corpse/wound/blood/spirit element.
+- This is the SINGLE biggest retention lever — never open with "figure standing next to coffin"; open with the thing INSIDE the coffin.
+
 OTHER RULES:
 - duration_sec: 2 or 3 for shots 1–2; 8 for standard shots 3-8, 10 for climactic action shots.
 - is_key_shot: Mark EXACTLY 2-3 shots as true — the most action-packed.
 - characters: CRITICAL — list the EXACT character names (from the provided Characters list) whose body, face, or silhouette is PHYSICALLY VISIBLE in the shot. If the scene_prompt describes only environment, objects, or atmosphere with NO human figure present, use []. DO NOT add a character just because they are the narrator or implied. MAXIMUM 2 characters per shot — never list 3 or more.
+- When shot_subject is corpse_face / wound / bloody_object / ritual_object / supernatural_entity / environment → characters MUST be [] (the subject is the thing, not the person).
 
 SCENE_ID RULES — CRITICAL for visual consistency:
 - scene_id is a short snake_case English label for the physical location (e.g. "coffin_shop", "temple_gate", "dark_forest", "excavation_pit").
@@ -144,10 +170,11 @@ SCENE_ID RULES — CRITICAL for visual consistency:
 Return JSON:
 {
   "title": "string — episode title in Vietnamese",
-  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "wide_to_close", "scene_id": "location_slug" } ]
+  "shots": [ { "scene_prompt": "string", "narration_text": "string", "duration_sec": 6, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "wide_to_close", "scene_id": "location_slug", "shot_subject": "person_action" } ]
 }
 shots MUST have EXACTLY 8 elements. EXACTLY 2-3 must have is_key_shot=true.
-camera_flow MUST be one of: "wide_to_close", "close_to_wide", "pan_across", "detail_reveal", "static_close", "static_wide"."""
+camera_flow MUST be one of: "wide_to_close", "close_to_wide", "pan_across", "detail_reveal", "static_close", "static_wide".
+shot_subject MUST be one of: "person_action", "corpse_face", "wound", "bloody_object", "supernatural_entity", "ritual_object", "environment"."""
 
 
 _HOOK_SYSTEM = """You are a Vietnamese short video scriptwriter for TikTok/YouTube Shorts.
@@ -159,11 +186,16 @@ RULES:
 - narration_text MUST be 10 words or fewer.
 - scene_prompt: comma-separated tags for Stable Diffusion (English only, no character names, no sentences).
 - scene_prompt MUST contain: 1 specific location with detail, 1 specific action/pose, 1 foreground element, 1 background element, 1 specific lighting.
-- scene_prompt MUST end with: "anime style, no text, no watermarks"
+- DO NOT include style/safety tags (anime style, no text, no watermarks, sfw) — they are injected automatically downstream.
 - camera_flow: MUST be "static_close" or "detail_reveal" for hook shots.
 
+SHOT_SUBJECT — hook MUST prefer shock:
+- Choose shot_subject from: "corpse_face" | "wound" | "bloody_object" | "supernatural_entity" | "ritual_object" | "person_action" | "environment".
+- If the opening story has a corpse/wound/blood/ghost element → shot_subject MUST be the corresponding non-person value, characters = [], and scene_prompt MUST open with "extreme close-up" or "macro shot" of that thing — NOT a figure standing next to it.
+- Only use "person_action" when the opening scene has no shock element available.
+
 Return JSON:
-{ "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "static_close" }"""
+{ "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "static_close", "shot_subject": "corpse_face" }"""
 
 
 def _coerce_shot_item(item: object, episode_num: int, index: int) -> dict | None:
@@ -246,11 +278,22 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
     # Outputs between 80–150 words are accepted with a WARNING for visibility.
     shots = result.get("shots", [])
     if isinstance(shots, list) and shots:
-        total_words = sum(
-            len(str(s.get("narration_text", "")).split())
-            for s in shots
-            if isinstance(s, dict)
-        )
+        # Ollama occasionally returns shots as JSON-encoded strings instead of
+        # dicts. Parse those before counting so the validator doesn't spuriously
+        # reject a valid response (total_words would otherwise be 0).
+        def _narration_of(s: object) -> str:
+            if isinstance(s, dict):
+                return str(s.get("narration_text", ""))
+            if isinstance(s, str):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, dict):
+                        return str(parsed.get("narration_text", ""))
+                except json.JSONDecodeError:
+                    return ""
+            return ""
+
+        total_words = sum(len(_narration_of(s).split()) for s in shots)
         if total_words < 80:
             logger.warning(
                 "Script rejected: total_words={} < 80, retrying | episode={}",
@@ -489,12 +532,25 @@ FIELDS TO EXTRACT:
   BAD: "spooky lighting", "dark atmosphere", "dramatic light"
   This MUST be horror-appropriate. No warm sunlight unless narration explicitly describes daytime safety.
 - composition: Camera framing tag if obvious from narration. Otherwise leave empty string "".
-  Examples: "medium close-up", "wide establishing shot", "medium shot"
+  Examples: "medium close-up", "wide establishing shot", "medium shot", "extreme close-up", "macro shot", "low angle shot"
+- shot_subject: What the camera focuses on. One of: "person_action" | "corpse_face" | "wound" | "bloody_object" | "supernatural_entity" | "ritual_object" | "environment".
+  MANDATORY mapping (Vietnamese keywords in narration → shot_subject):
+    xác / thi thể / tử thi / thây / mắt trợn / trắng bệch / tái mét → "corpse_face"
+    vết cắn / vết thương / dấu răng / máu chảy / rách da → "wound"
+    dao dính máu / kiếm máu / bùa cháy / object covered in blood as center of frame → "bloody_object"
+    ma / quỷ / hồn / vong / bị nhập / hiện hình → "supernatural_entity"
+    pure atmosphere, no human, no shock object → "environment"
+    glowing talisman / altar / candles as center (no person) → "ritual_object"
+    otherwise → "person_action"
+  When shot_subject is NOT "person_action":
+    - composition MUST be "extreme close-up" / "macro shot" / "low angle shot" / "detail shot" (NEVER "medium close-up" or "wide shot").
+    - subjects MUST be [] — the thing is the subject, not a person.
+    - actions[0] MUST describe the THING (e.g. "pale lifeless female face with wide bloodshot dead eyes, dark blood trickling from mouth"), NOT a person looking at it.
 
 INPUT FORMAT: JSON array of shots, each with: shot_index, narration_text, characters
 
 OUTPUT FORMAT: JSON array, same length as input, same order:
-[{"shot_index": 0, "subjects": [...], "actions": ["primary action", "optional second action"], "setting": "...", "key_objects": [...], "mood_lighting": "...", "composition": ""}]
+[{"shot_index": 0, "subjects": [...], "actions": ["primary action", "optional second action"], "setting": "...", "key_objects": [...], "mood_lighting": "...", "composition": "", "shot_subject": "person_action"}]
 
 CRITICAL: Return ONLY the JSON array, no markdown, no explanation."""
 
@@ -547,6 +603,26 @@ _CAMERA_FLOW_TO_COMPOSITION: dict[str, str] = {
     "pan_across": "",
 }
 
+# Shot-subject-driven framing overrides. When brief.shot_subject is non-person,
+# these tags take precedence over camera_flow mapping AND over any composition
+# field that isn't already a close-up variant — because horror retention depends
+# on the shock subject filling the frame.
+_SHOT_SUBJECT_FRAMING: dict[str, tuple[str, str]] = {
+    # (opening composition tag, subject emphasis prefix)
+    "corpse_face": ("extreme close-up", "pale lifeless face with wide bloodshot dead eyes"),
+    "wound": ("macro shot", "deep bleeding wound on pale skin"),
+    "bloody_object": ("extreme close-up", "blood-soaked object in center of frame"),
+    "supernatural_entity": ("low angle shot", "ghostly translucent figure emerging from dark mist"),
+    "ritual_object": ("close-up detail shot", "glowing ritual object centered in frame"),
+    "environment": ("wide establishing shot", ""),
+    "person_action": ("", ""),
+}
+
+_CLOSEUP_COMPOSITION_TOKENS: frozenset[str] = frozenset([
+    "extreme close-up", "macro shot", "close-up detail shot", "low angle shot",
+    "detail shot", "close-up",
+])
+
 # Tags in synthesized prompts are capped at this count to leave buffer for
 # rule-based _align_scene_prompt_with_narration() pass.
 _SYNTHESIS_MAX_TAGS = 16
@@ -566,16 +642,35 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
     Tag order: [composition+setting] → [primary_action] → [key_objects] → [mood_lighting] → [subjects]
     Caps at _SYNTHESIS_MAX_TAGS with priority-based dropping.
     No LLM involved.
-    """
-    from models.schemas import ShotVisualBrief  # local import avoids circular at module-level
 
-    # Resolve composition from brief or map from camera_flow.
-    composition = brief.composition.strip()
+    shot_subject override: when brief.shot_subject is non-person, composition is
+    forced to an extreme close-up / macro / low-angle variant, subjects are
+    suppressed, and the subject-emphasis prefix replaces the primary action as
+    the visual hero. This is the retention lever for horror shots.
+    """
+    from models.schemas import ShotVisualBrief, ShotSubject  # noqa: F401  local import avoids circular at module-level
+
+    subject_key = brief.shot_subject.value if brief.shot_subject else "person_action"
+    forced_composition, subject_prefix = _SHOT_SUBJECT_FRAMING.get(
+        subject_key, ("", "")
+    )
+    non_person_subject = subject_key not in ("person_action", "environment")
+
+    # Resolve composition: subject-forced > brief.composition > camera_flow mapping.
+    composition = forced_composition or brief.composition.strip()
     if not composition:
         composition = _CAMERA_FLOW_TO_COMPOSITION.get(shot.camera_flow.value, "")
 
-    # Primary action is actions[0]; fall back to empty string.
+    # If shot_subject is non-person but composition is still a neutral framing
+    # (e.g. the LLM ignored the rule), upgrade to the subject's forced framing.
+    if non_person_subject and composition.lower() not in _CLOSEUP_COMPOSITION_TOKENS:
+        composition = forced_composition or composition
+
+    # Primary action: for non-person subjects, the subject_prefix IS the action
+    # (describes the shock thing, not a person performing).
     primary_action = brief.actions[0].strip() if brief.actions else ""
+    if non_person_subject:
+        primary_action = subject_prefix or primary_action
 
     # Build ordered candidate tag groups (by priority).
     # Priority: action > setting > subjects[0] > mood_lighting > key_objects > subjects[1]
@@ -587,8 +682,10 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
     if primary_action:
         never_drop.append(primary_action)
 
-    # Primary subject — never drop.
-    primary_subject = brief.subjects[0] if brief.subjects else ""
+    # Primary subject — never drop. Suppressed entirely for non-person shots.
+    primary_subject = ""
+    if not non_person_subject and brief.subjects:
+        primary_subject = brief.subjects[0]
     if primary_subject and not _subject_already_in_action(primary_subject, primary_action):
         never_drop.append(primary_subject)
 
@@ -606,8 +703,9 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
         key_object_tags.append(f"({obj}:1.15)")
 
     # Secondary subject — can be dropped when budget exhausted.
+    # Suppressed entirely for non-person shots.
     secondary_subject = ""
-    if len(brief.subjects) > 1:
+    if not non_person_subject and len(brief.subjects) > 1:
         sub = brief.subjects[1].strip()
         if sub and not _subject_already_in_action(sub, primary_action):
             secondary_subject = sub
