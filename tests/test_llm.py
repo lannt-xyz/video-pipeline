@@ -359,7 +359,7 @@ class TestScriptwriter:
 
         shots = [
             ShotScript(
-                scene_prompt="muddy excavation pit, man digging with shovel, anime style, manhua art style, no text, no watermarks",
+                scene_prompt="muddy excavation pit, man digging with shovel, anime style, no text, no watermarks",
                 narration_text="Diệp Đại Bảo dùng dù đỏ che mưa rồi cắm nhang trước mộ.",
                 duration_sec=6,
             )
@@ -455,7 +455,7 @@ class TestShotVisualBriefSchema:
 
         defaults = dict(
             subjects=["hooded daoist figure"],
-            action="figure prying open stone coffin lid with iron crowbar",
+            actions=["figure prying open stone coffin lid with iron crowbar"],
             setting="dimly lit coffin shop with rows of dark wooden coffins",
             key_objects=["glowing talisman paper"],
             mood_lighting="blood-red candle flame casting elongated shadows",
@@ -482,7 +482,7 @@ class TestShotVisualBriefSchema:
             visual_brief=brief,
         )
         assert shot.visual_brief is not None
-        assert shot.visual_brief.action.startswith("figure prying")
+        assert shot.visual_brief.actions[0].startswith("figure prying")
 
     def test_episode_script_round_trip_with_visual_brief(self):
         """Serialize and deserialize EpisodeScript with visual_brief embedded."""

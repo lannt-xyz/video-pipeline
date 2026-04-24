@@ -26,28 +26,12 @@
       "ckpt_name": "dreamshaperXL_lightningDPMSDE.safetensors"
     }
   },
-  "2": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": [
-        "1",
-        0
-      ],
-      "clip": [
-        "1",
-        1
-      ],
-      "lora_name": "manhua_style_v2.safetensors",
-      "strength_model": 0.7,
-      "strength_clip": 0.7
-    }
-  },
   "3": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "__SCENE_PROMPT__, masterpiece, best quality, cinematic, wide shot, bright key light, vivid color grading",
       "clip": [
-        "2",
+        "1",
         1
       ]
     }
@@ -57,7 +41,7 @@
     "inputs": {
       "text": "__NEGATIVE_PROMPT__, nsfw, underexposed, dark scene, murky shadows",
       "clip": [
-        "2",
+        "1",
         1
       ]
     }
@@ -74,7 +58,7 @@
     "class_type": "KSampler",
     "inputs": {
       "model": [
-        "2",
+        "1",
         0
       ],
       "positive": [

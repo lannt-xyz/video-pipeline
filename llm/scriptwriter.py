@@ -74,7 +74,7 @@ CAMERA FLOW GUIDELINES:
 
 SCENE PROMPT RULES — CRITICAL: ComfyUI uses Stable Diffusion, which requires comma-separated tags, NOT sentences.
 scene_prompt must be a SHORT TAG LIST only. Structure:
-  [specific location], [specific action/pose], [foreground element], [background element], [specific lighting], anime style, manhua art style, no text, no watermarks
+  [specific location], [specific action/pose], [foreground element], [background element], [specific lighting], anime style, no text, no watermarks
 
 SCENE PROMPT QUALITY — Each scene_prompt MUST contain ALL of the following:
 1. At least 1 SPECIFIC LOCATION tag (NOT generic): "dimly lit coffin shop with wooden shelves", NOT just "coffin shop interior"
@@ -85,18 +85,18 @@ SCENE PROMPT QUALITY — Each scene_prompt MUST contain ALL of the following:
 6. SPECIFIC LIGHTING description: "dim oil lantern casting long shadows on walls", NOT just "dramatic lighting"
 
 SCENE PROMPT EXAMPLES:
-WRONG: "coffin shop interior, intense fight scene, wooden shelves, dim lantern light, dynamic action pose, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
+WRONG: "coffin shop interior, intense fight scene, wooden shelves, dim lantern light, dynamic action pose, anime style, dramatic lighting, detailed background, no text, no watermarks"
 → Problems: "intense fight scene" is vague (WHO doing WHAT?), "dynamic action pose" is generic, "dramatic lighting" has no specifics
 
-RIGHT: "dimly lit coffin shop with hanging red paper, figure lunging forward with wooden sword, shattered pottery on floor, rows of dark coffins receding into shadow, flickering oil lamp casting long orange shadows, anime style, manhua art style, no text, no watermarks"
+RIGHT: "dimly lit coffin shop with hanging red paper, figure lunging forward with wooden sword, shattered pottery on floor, rows of dark coffins receding into shadow, flickering oil lamp casting long orange shadows, anime style, no text, no watermarks"
 
-WRONG: "mountain monastery courtyard, daoist training, morning mist, stone staircase, bamboo grove, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
+WRONG: "mountain monastery courtyard, daoist training, morning mist, stone staircase, bamboo grove, anime style, dramatic lighting, detailed background, no text, no watermarks"
 → Problems: "daoist training" is too vague, no foreground object, "dramatic lighting" not specific
 
-RIGHT: "stone courtyard at mountain temple summit, figure in meditation stance with hands raised, crumbling stone incense burner in foreground, bamboo forest and mist-covered peaks in background, pale golden dawn light filtering through clouds, anime style, manhua art style, no text, no watermarks"
+RIGHT: "stone courtyard at mountain temple summit, figure in meditation stance with hands raised, crumbling stone incense burner in foreground, bamboo forest and mist-covered peaks in background, pale golden dawn light filtering through clouds, anime style, no text, no watermarks"
 
-WRONG: "outdoor gravesite, ancient tomb excavation, night scene, eerie moonlight, dark soil, stone ruins, anime style, manhua art style, dramatic lighting, detailed background, no text, no watermarks"
-RIGHT: "muddy excavation pit with exposed stone sarcophagus, figure kneeling and prying open stone lid, scattered ritual candles on wet earth, ancient crumbling gateway half-buried behind, cold blue moonlight with drifting fog wisps, anime style, manhua art style, no text, no watermarks"
+WRONG: "outdoor gravesite, ancient tomb excavation, night scene, eerie moonlight, dark soil, stone ruins, anime style, dramatic lighting, detailed background, no text, no watermarks"
+RIGHT: "muddy excavation pit with exposed stone sarcophagus, figure kneeling and prying open stone lid, scattered ritual candles on wet earth, ancient crumbling gateway half-buried behind, cold blue moonlight with drifting fog wisps, anime style, no text, no watermarks"
 
 HORROR ATMOSPHERE — CRITICAL for this story genre:
 Every scene_prompt MUST include at least 1 HORROR/SUPERNATURAL ATMOSPHERE element from this palette:
@@ -127,7 +127,7 @@ REQUIRED in scene_prompt — USE ALL TAG POSITIONS FOR ACTUAL CONTENT:
 - At least 1 foreground element (close to camera)
 - At least 1 background element (depth/environment)
 - At least 1 specific lighting description
-- Do NOT include "anime style", "manhua art style", "no text", "no watermarks", "sfw", "fully clothed" — these are added automatically
+- Do NOT include "anime style", "no text", "no watermarks", "sfw", "fully clothed" — these are added automatically
 
 OTHER RULES:
 - duration_sec: 2 or 3 for shots 1–2; 8 for standard shots 3-8, 10 for climactic action shots.
@@ -159,7 +159,7 @@ RULES:
 - narration_text MUST be 10 words or fewer.
 - scene_prompt: comma-separated tags for Stable Diffusion (English only, no character names, no sentences).
 - scene_prompt MUST contain: 1 specific location with detail, 1 specific action/pose, 1 foreground element, 1 background element, 1 specific lighting.
-- scene_prompt MUST end with: "anime style, manhua art style, no text, no watermarks"
+- scene_prompt MUST end with: "anime style, no text, no watermarks"
 - camera_flow: MUST be "static_close" or "detail_reveal" for hook shots.
 
 Return JSON:
@@ -292,7 +292,7 @@ EXTRACTION RULES — read narration and extract these 5 elements:
 
 REWRITE RULES:
 - Structure: [LOCATION with visual detail], [ACTION/POSE — must match narration action], [foreground object from narration], [background depth 2 elements], [HORROR ATMOSPHERE lighting/mood]
-- Do NOT add style/safety metadata tags (sfw, fully clothed, anime style, manhua art style, no text, no watermarks) — they are injected automatically downstream. Use ALL tag positions for visual content.
+- Do NOT add style/safety metadata tags (sfw, fully clothed, anime style, no text, no watermarks) — they are injected automatically downstream. Use ALL tag positions for visual content.
 - ACTION tag MUST reflect what narration_text says is happening — not a standing portrait
 - HORROR ATMOSPHERE is MANDATORY: every prompt must have at least 1 eerie/dark/supernatural lighting or mood tag — NEVER use plain "bright daylight" or "warm sunlight" unless the narration explicitly describes a safe daytime scene
 - If narration says "prying open coffin lid" → scene_prompt must contain prying/opening action tags
@@ -309,9 +309,9 @@ CRITICAL: Return ONLY the JSON array, no markdown, no explanation."""
 _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(dù|ô)\b", re.IGNORECASE), "red umbrella"),
     (re.compile(r"\b(nhang|hương)\b", re.IGNORECASE), "burning incense sticks"),
-    (re.compile(r"quan tài|nắp quan", re.IGNORECASE), "red lacquered coffin"),
+    (re.compile(r"quan tài|nắp quan", re.IGNORECASE), "chinese style red lacquered wooden coffin"),
     (re.compile(r"dao găm|\bdao\b", re.IGNORECASE), "dagger in hand"),
-    (re.compile(r"\bđinh\b", re.IGNORECASE), "rusted coffin nails"),
+    (re.compile(r"\bđinh\b", re.IGNORECASE), "iron nails on wooden coffin lid"),
     (re.compile(r"chậu đồng", re.IGNORECASE), "bronze ritual basin"),
     (re.compile(r"bùa|\bphù\b|chu sa", re.IGNORECASE), "yellow talisman paper"),
     (re.compile(r"la bàn", re.IGNORECASE), "feng shui compass"),
@@ -327,7 +327,7 @@ _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"máu|vết máu|đẫm máu", re.IGNORECASE), "dark blood stain on surface"),
     (re.compile(r"xương|bộ xương|sọ người", re.IGNORECASE), "scattered bones on ground"),
     (re.compile(r"thi thể|xác chết|\bxác\b|thây|tử thi|nữ tử thi", re.IGNORECASE), "pale lifeless corpse with rigid limbs"),
-    (re.compile(r"mộ|ngôi mộ|mồ", re.IGNORECASE), "ancient moss-covered grave mound"),
+    (re.compile(r"mộ|ngôi mộ|mồ", re.IGNORECASE), "chinese earthen grave mound with carved stone stele"),
     (re.compile(r"nến|đèn cầy", re.IGNORECASE), "dripping wax candle with flickering flame"),
     (re.compile(r"trắng bệch|trắng nhợt|xanh xao|tái mét", re.IGNORECASE), "deathly pale white skin with blue-grey veins"),
     (re.compile(r"trợn trừng|mắt mở to|mắt trợn", re.IGNORECASE), "wide staring dead eyes with dilated pupils"),
@@ -397,11 +397,52 @@ _WEAK_POSE_TAGS: frozenset[str] = frozenset([
     "performing ritual",
 ])
 
+# mood_lighting phrases that violate the horror/supernatural genre constraints.
+# Briefs containing any of these terms are rejected unless narration explicitly
+# describes a safe daytime scene (detected by _DAYTIME_SAFE_KEYWORDS).
+_HORROR_MOOD_VIOLATIONS: frozenset[str] = frozenset([
+    "bright white light",
+    "clear visibility",
+    "sunny daylight",
+    "warm sunlight",
+    "bright daylight",
+    "cheerful sunlight",
+    "golden sunlight",
+    "morning sunlight",
+    "soft natural light",
+    "bright natural light",
+])
+
+# Vietnamese keywords indicating a narration is set in a safe daytime scene;
+# when present, horror mood violations are NOT flagged.
+_DAYTIME_SAFE_KEYWORDS: tuple[str, ...] = (
+    "ban ngày", "ban mai", "bình minh", "giữa trưa", "buổi sáng", "ánh nắng",
+)
+
+# Generic action strings that the rule-based _align_scene_prompt_with_narration
+# should still override (pass-3 action injection IS needed for these).
+_GENERIC_ACTIONS: frozenset[str] = frozenset([
+    "looking around",
+    "standing",
+    "figure standing",
+    "figure looking",
+    "figure watching",
+    "figure waiting",
+    "figure contemplating",
+    "figure thinking",
+    "performing ritual",
+    "conducting ceremony",
+    "ritual",
+    "ceremony",
+    "figure posing",
+    "figure in stance",
+])
+
 # Tags that are purely structural/style — skip when extracting environment anchors.
 _PROMPT_SKIP_TAGS: frozenset[str] = frozenset([
     "sfw", "fully clothed", "high collar", "long sleeves", "covered body",
     "modest clothing", "traditional attire", "armored", "formal wear",
-    "anime style", "manhua art style", "no text", "no watermarks",
+    "anime style", "no text", "no watermarks",
     "wide establishing shot", "full scene view", "environment focus",
     "no characters in foreground",
 ])
@@ -420,18 +461,26 @@ FIELDS TO EXTRACT:
 - subjects: List of role tags (max 2). Must be generic roles, NOT character names.
   subjects[0] MUST be the PRIMARY subject (the one performing the action).
   Example: ["hooded daoist figure", "kneeling young warrior"]
-- action: ONE specific, observable physical action. Must contain a concrete verb + direction/result.
-  GOOD: "figure prying open stone coffin lid with iron crowbar"
-  GOOD: "figure turning head sharply toward distant sound"
-  GOOD: "elder figure slamming fist onto wooden table"
-  BAD: "performing ritual", "looking around", "standing", "mysterious gesture", "conducting ceremony"
-  BLACKLIST — NEVER use these words in action: ritual, ceremony, pose, scene, performing, conducting
+- actions: List of 1-3 specific, observable physical actions in chronological order.
+  EACH action must contain a concrete verb + direction/result.
+  HOW TO SPLIT: Read narration_text sentence by sentence. If 1 sentence → 1 action.
+  If 2-3 sentences describe different physical events → 1 action per event (max 3 total).
+  actions[0] = FIRST event (most visually dominant — used as primary frame).
+  actions[1] = SECOND event (if exists — rendered in frame 2).
+  actions[2] = THIRD event (if exists — rendered in frame 3).
+  GOOD (single action): ["figure prying open stone coffin lid with iron crowbar"]
+  GOOD (multi-event): ["figure running downhill through rain", "figure kneeling at gravesite with hands on wet earth"]
+  BAD: ["performing ritual", "looking around", "standing", "mysterious gesture", "conducting ceremony"]
+  BLACKLIST — NEVER use these words in any action: ritual, ceremony, pose, scene, performing, conducting
   If narration describes DISCOVERY ("nhìn thấy", "phát hiện") → action = the revealing moment
-  If narration describes ACCUSATION ("chỉ mặt", "buộc tội") → action = accusatory gesture with outstretched arm
-  If narration is PURELY environment/atmosphere with NO clear character action → use static pose or
-    environment motion (e.g. "figure crouching motionless behind stone pillar", "leaves drifting through empty courtyard")
+  If narration is PURELY environment/atmosphere → ["figure crouching motionless behind stone pillar"]
 - setting: Physical location with ONE visual detail. E.g. "dimly lit coffin shop with rows of dark wooden coffins"
   MUST be a descriptive English phrase. NEVER use an identifier or slug (e.g. "dark_forest", "mountain_road" are FORBIDDEN — write "moonlit forest path with ancient stone graves" instead).
+  AESTHETIC: This story is set in rural CHINA. All settings MUST reflect Chinese/East Asian architecture and culture by default.
+  - Graves → "earthen chinese grave mound with stone stele", NOT western tombstone/cross
+  - Houses → "traditional chinese village house with wooden beams", NOT western cottage
+  - Coffins → "red lacquered chinese wooden coffin", NOT plain box or western casket
+  - Only use western elements if the narration EXPLICITLY mentions them.
 - key_objects: List of specific props visible in the scene (max 4). Concrete nouns only.
   Example: ["glowing talisman paper", "ritual candles", "iron chains on wall"]
 - mood_lighting: MUST use format "light source + color palette + effect".
@@ -442,14 +491,53 @@ FIELDS TO EXTRACT:
 - composition: Camera framing tag if obvious from narration. Otherwise leave empty string "".
   Examples: "medium close-up", "wide establishing shot", "medium shot"
 
-INPUT FORMAT: JSON array of shots, each with: shot_index, narration_text, scene_id, characters
+INPUT FORMAT: JSON array of shots, each with: shot_index, narration_text, characters
 
 OUTPUT FORMAT: JSON array, same length as input, same order:
-[{"shot_index": 0, "subjects": [...], "action": "...", "setting": "...", "key_objects": [...], "mood_lighting": "...", "composition": ""}]
+[{"shot_index": 0, "subjects": [...], "actions": ["primary action", "optional second action"], "setting": "...", "key_objects": [...], "mood_lighting": "...", "composition": ""}]
 
 CRITICAL: Return ONLY the JSON array, no markdown, no explanation."""
 
-# Map camera_flow values to composition tags when brief.composition is empty.
+# --------------------------------------------------------------------------- #
+#  Character Resolution — Phase 1                                              #
+# --------------------------------------------------------------------------- #
+_CHARACTER_RESOLVE_SYSTEM = """You are a character resolution assistant for a Vietnamese horror video pipeline.
+You receive a batch of video shots. Each shot has:
+  - shot_index (int)
+  - narration_text (Vietnamese — what the narrator says)
+  - llm_characters (the initial character list the LLM assigned; may be wrong)
+  - arc_characters (all known characters in this arc — use for cross-reference)
+
+YOUR TASK: For each shot, determine which characters are PHYSICALLY VISIBLE in the image.
+
+RULES:
+1. SUBJECT: the character who is PERFORMING the main action described in narration_text.
+   - Vietnamese patterns for subject: "X đi đến...", "X sử dụng...", "X phát hiện...", "X đặt tay...", "X tiêu diệt..."
+   - The GRAMMATICAL SUBJECT of the main verb = primary visible character.
+2. OBJECT_VISIBLE: a character who is PHYSICALLY PRESENT and visible (e.g. being examined, confronted, standing nearby).
+   - Vietnamese patterns: "kiểm tra cơ thể của Y", "đối mặt với Y", "nhìn thấy Y"
+   - DO NOT include a character just because they are MENTIONED or implied — they must be PHYSICALLY VISIBLE.
+3. If narration mentions only environment/atmosphere with NO named character acting → return [].
+4. MAXIMUM 2 characters total (subject + 1 object_visible). If 3+ would be visible, keep subject + most prominent object_visible.
+5. Character names must come from arc_characters list EXACTLY (exact Vietnamese spelling).
+
+IMPORTANT DISTINCTION:
+  "Thanh Vân Tử phát hiện ra rằng nam tử là Diệp Đại Bảo"
+  → subject = Thanh Vân Tử (person DOING the discovering)
+  → object_visible = Diệp Đại Bảo (person being discovered — physically present)
+
+  "Thanh Vân Tử đi đến nhà Diệp Đại Công"
+  → subject = Thanh Vân Tử
+  → object_visible = Diệp Đại Công (at his own home — physically present in scene)
+
+OUTPUT FORMAT: JSON array, same length as input, same order:
+[{"shot_index": 0, "characters": ["PrimarySubject", "OptionalObjectVisible"]}]
+
+CRITICAL: Return ONLY the JSON array, no markdown, no explanation.
+characters must be [] if no named character is physically visible."""
+
+# --------------------------------------------------------------------------- #
+#  Map camera_flow values to composition tags when brief.composition is empty.
 _CAMERA_FLOW_TO_COMPOSITION: dict[str, str] = {
     "static_close": "medium close-up",
     "detail_reveal": "medium close-up",
@@ -472,7 +560,10 @@ def _subject_already_in_action(subject: str, action: str) -> bool:
 def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
     """Deterministic Python synthesis of a ComfyUI tag list from a visual brief.
 
-    Tag order: [composition+setting] → [action] → [key_objects] → [mood_lighting] → [subjects]
+    Uses brief.actions[0] (primary action) as the scene_prompt action tag.
+    Secondary actions (actions[1+]) are injected by frame_decomposer per-frame.
+
+    Tag order: [composition+setting] → [primary_action] → [key_objects] → [mood_lighting] → [subjects]
     Caps at _SYNTHESIS_MAX_TAGS with priority-based dropping.
     No LLM involved.
     """
@@ -483,6 +574,9 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
     if not composition:
         composition = _CAMERA_FLOW_TO_COMPOSITION.get(shot.camera_flow.value, "")
 
+    # Primary action is actions[0]; fall back to empty string.
+    primary_action = brief.actions[0].strip() if brief.actions else ""
+
     # Build ordered candidate tag groups (by priority).
     # Priority: action > setting > subjects[0] > mood_lighting > key_objects > subjects[1]
     # These first four are NEVER dropped.
@@ -490,11 +584,12 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
     if composition:
         never_drop.append(composition)
     never_drop.append(brief.setting)
-    never_drop.append(brief.action)
+    if primary_action:
+        never_drop.append(primary_action)
 
     # Primary subject — never drop.
     primary_subject = brief.subjects[0] if brief.subjects else ""
-    if primary_subject and not _subject_already_in_action(primary_subject, brief.action):
+    if primary_subject and not _subject_already_in_action(primary_subject, primary_action):
         never_drop.append(primary_subject)
 
     never_drop.append(brief.mood_lighting)
@@ -514,7 +609,7 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
     secondary_subject = ""
     if len(brief.subjects) > 1:
         sub = brief.subjects[1].strip()
-        if sub and not _subject_already_in_action(sub, brief.action):
+        if sub and not _subject_already_in_action(sub, primary_action):
             secondary_subject = sub
 
     # Fill up to _SYNTHESIS_MAX_TAGS.
@@ -541,6 +636,7 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
 def _extract_visual_briefs(
     shots: List[ShotScript],
     episode_num: int,
+    first_event_context: str | None = None,
 ) -> List[ShotScript]:
     """LLM extraction pass: convert narration_text to ShotVisualBrief for each shot.
 
@@ -548,6 +644,10 @@ def _extract_visual_briefs(
     3-second hook shots ARE processed so they receive proper English scene_prompts.
     scene_id is NOT sent in the payload to prevent the LLM from copying the slug
     into setting/composition fields.
+
+    first_event_context: when provided, hook shots (index 0-1, duration <=3s) receive
+    an extra context field in the payload so the LLM anchors the image to the
+    first story event rather than the short meta narration text.
     On full failure, returns shots unchanged so the caller can fallback.
     """
     from models.schemas import ShotVisualBrief
@@ -561,11 +661,21 @@ def _extract_visual_briefs(
     for i, shot in enumerate(shots):
         if shot.duration_sec <= 2:
             continue  # visual_brief stays None for very-short shots
-        payload.append({
+        entry: dict = {
             "shot_index": i,
             "narration_text": shot.narration_text,
             "characters": shot.characters,
-        })
+        }
+        # Phase 3: Hook shots have ≤10 word narration (meta/dialogue, not visual).
+        # Inject first_event_context so the LLM generates a visual for the story's
+        # actual opening moment rather than a generic "looking around" image.
+        if first_event_context and i <= 1 and shot.duration_sec <= 3:
+            entry["visual_context"] = first_event_context
+            entry["note"] = (
+                "narration_text is short meta-dialogue. "
+                "Extract visual from visual_context instead, not narration_text."
+            )
+        payload.append(entry)
 
     if not payload:
         logger.debug("No eligible shots for visual brief extraction | episode={}", episode_num)
@@ -634,17 +744,32 @@ def _extract_visual_briefs(
 
             brief = ShotVisualBrief(**{
                 "subjects": item.get("subjects") or [],
-                "action": item.get("action") or "",
+                "actions": item.get("actions") or item.get("action") or [],
                 "setting": setting_val,
                 "key_objects": item.get("key_objects") or [],
                 "mood_lighting": item.get("mood_lighting") or "",
                 "composition": composition_val,
             })
+
+            # 4a: Reject briefs whose mood_lighting violates horror tone,
+            # unless narration explicitly describes a safe daytime scene.
+            mood_lower = brief.mood_lighting.lower()
+            narration_lower = shots[idx].narration_text.lower()
+            if any(v in mood_lower for v in _HORROR_MOOD_VIOLATIONS):
+                if not any(kw in narration_lower for kw in _DAYTIME_SAFE_KEYWORDS):
+                    logger.warning(
+                        "Visual brief mood_lighting violates horror tone (%r) — skipping brief "
+                        "and keeping existing scene_prompt | episode={} shot={}",
+                        brief.mood_lighting[:80], episode_num, idx,
+                    )
+                    continue  # brief NOT saved; shot keeps previous scene_prompt
+
             shots[idx] = shots[idx].model_copy(update={"visual_brief": brief})
             populated += 1
 
             # Track quality metrics.
-            if not brief.action:
+            primary_action = brief.actions[0] if brief.actions else ""
+            if not primary_action:
                 empty_action += 1
             if not brief.key_objects:
                 empty_objects += 1
@@ -652,13 +777,13 @@ def _extract_visual_briefs(
                 empty_mood += 1
 
             logger.debug(
-                "Visual brief extracted | episode={} shot={} action={!r} objects={} mood={!r}",
-                episode_num, idx, brief.action[:60], brief.key_objects, brief.mood_lighting[:60],
+                "Visual brief extracted | episode={} shot={} actions={} objects={} mood={!r}",
+                episode_num, idx, brief.actions, brief.key_objects, brief.mood_lighting[:60],
             )
 
-            if not brief.action:
+            if not primary_action:
                 logger.warning(
-                    "Visual brief has empty action | episode={} shot={}", episode_num, idx
+                    "Visual brief has empty actions | episode={} shot={}", episode_num, idx
                 )
             if not brief.key_objects:
                 logger.warning(
@@ -714,6 +839,7 @@ def _synthesize_scene_prompts_from_briefs(
 def _build_scene_prompts_from_narration(
     shots: List[ShotScript],
     episode_num: int,
+    first_event_context: str | None = None,
 ) -> List[ShotScript]:
     """Two-pass replacement for _rewrite_scene_prompts_from_narration.
 
@@ -721,8 +847,9 @@ def _build_scene_prompts_from_narration(
     Pass 2: Python synthesis — ShotVisualBrief → ComfyUI tag list (no LLM)
 
     Falls back to _rewrite_scene_prompts_from_narration() if extraction yields 0 briefs.
+    first_event_context is forwarded to _extract_visual_briefs for Phase 3 hook anchoring.
     """
-    shots = _extract_visual_briefs(shots, episode_num)
+    shots = _extract_visual_briefs(shots, episode_num, first_event_context=first_event_context)
     populated = sum(1 for s in shots if s.visual_brief is not None)
     if populated == 0:
         logger.warning(
@@ -772,6 +899,31 @@ def _extract_env_anchors(scene_prompt: str) -> tuple[str, str]:
     return location, lighting
 
 
+def _validate_scene_id_consistency(
+    shots: List[ShotScript],
+    episode_num: int,
+) -> None:
+    """4b: Warn when a shot's visual_brief.setting has no keyword overlap with its scene_id.
+
+    This is a diagnostic pass — it does NOT modify shots. The warning surfaces
+    LLM scene_id / setting mismatches early so they can be corrected in the prompt.
+    """
+    for i, shot in enumerate(shots):
+        sid = (shot.scene_id or "").strip()
+        if not sid or shot.visual_brief is None:
+            continue
+        setting_lower = shot.visual_brief.setting.lower()
+        # Expand underscores in scene_id to individual keywords.
+        sid_keywords = [kw for kw in sid.replace("_", " ").split() if len(kw) >= 3]
+        if not sid_keywords:
+            continue
+        if not any(kw in setting_lower for kw in sid_keywords):
+            logger.warning(
+                "scene_id/setting mismatch | episode={} shot={} scene_id={!r} setting={!r}",
+                episode_num, i, sid, shot.visual_brief.setting[:80],
+            )
+
+
 def _enforce_scene_continuity(
     shots: List[ShotScript],
     episode_num: int,
@@ -818,16 +970,22 @@ def _enforce_scene_continuity(
         body = [t for t in tags if t.lower() not in _PROMPT_SKIP_TAGS]
 
         # Drop stale location/lighting from body.
+        # Guard: curr_loc and curr_light may be the same tag when a single tag
+        # contains both a location marker and a lighting marker (e.g.
+        # "dimly lit village..."). In that case remove it once, not twice.
+        stale_tags: set[str] = set()
         if not loc_ok and curr_loc:
-            body = [t for t in body if t.lower() != curr_loc.lower()]
-        if not light_ok and curr_light:
-            body = [t for t in body if t.lower() != curr_light.lower()]
+            stale_tags.add(curr_loc.lower())
+        if not light_ok and curr_light and curr_light.lower() != curr_loc.lower():
+            stale_tags.add(curr_light.lower())
+        body = [t for t in body if t.lower() not in stale_tags]
 
         # Inject canon anchors at the front of body (right after safety prefix).
+        # Guard: canon_loc and canon_light may resolve to the same tag — inject once.
         injected: list[str] = []
         if not loc_ok and canon_loc:
             injected.append(canon_loc)
-        if not light_ok and canon_light:
+        if not light_ok and canon_light and canon_light.lower() != canon_loc.lower():
             injected.append(canon_light)
 
         new_prompt = ", ".join(prefix + injected + body)
@@ -1061,8 +1219,25 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
     episode_shots = _normalize_camera_flow(episode_shots, episode_num)
     episode_shots = _backfill_characters(episode_shots, arc.characters_in_episode, episode_num)
+    # Phase 1: LLM character resolution — distinguish subject vs object_visible per shot
+    episode_shots = _resolve_shot_characters(episode_shots, arc.characters_in_episode, episode_num)
+    # Phase 3: Build first-event context from arc key_events for hook shot anchoring.
+    # Hook narration is often short meta-dialogue (≤10 words) — the LLM needs the
+    # actual first story event to produce a visually meaningful image.
+    first_event_context: str | None = None
+    if arc.key_events:
+        first_event_context = arc.key_events[0]
+        logger.debug(
+            "Hook visual context set from arc.key_events[0] | episode={} context={!r}",
+            episode_num, first_event_context[:120],
+        )
+
     # Two-pass: LLM extraction (narration → brief) + Python synthesis (brief → tags)
-    episode_shots = _build_scene_prompts_from_narration(episode_shots, episode_num)
+    episode_shots = _build_scene_prompts_from_narration(
+        episode_shots, episode_num, first_event_context=first_event_context
+    )
+    # 4b: Warn when scene_id and brief.setting have no keyword overlap (diagnostic only)
+    _validate_scene_id_consistency(episode_shots, episode_num)
     # Rule-based layer: inject specific artifact/object tags that LLM might miss
     episode_shots = _align_scene_prompt_with_narration(episode_shots, episode_num)
     # Deterministic continuity: enforce shared location+lighting within each scene_id group
@@ -1083,6 +1258,14 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     script_path.write_text(script.model_dump_json(indent=2), encoding="utf-8")
 
     logger.info("Script written | episode={} shots={}", episode_num, len(script.shots))
+
+    # Phase 5: Write alignment report for manual review of narration ↔ image mapping.
+    try:
+        from pipeline.alignment_report import write_alignment_report
+        write_alignment_report(script, episode_num)
+    except Exception as exc:
+        logger.warning("Alignment report failed (non-fatal): {} | episode={}", exc, episode_num)
+
     return script
 
 
@@ -1277,6 +1460,125 @@ def _backfill_characters(
     return shots
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=5),
+    retry=retry_if_exception_type((json.JSONDecodeError, ValueError)),
+)
+def _resolve_shot_characters(
+    shots: List[ShotScript],
+    arc_characters: List[str],
+    episode_num: int,
+) -> List[ShotScript]:
+    """Phase 1: LLM pass that resolves which characters are physically visible per shot.
+
+    Distinguishes subject (performs action) vs object_visible (present in scene).
+    Saves raw LLM characters into characters_raw for debug, then overrides characters.
+    Falls back to existing characters list on any failure.
+    """
+    if not arc_characters:
+        logger.debug("No arc characters — skipping character resolution | episode={}", episode_num)
+        return shots
+
+    payload = []
+    for i, shot in enumerate(shots):
+        payload.append({
+            "shot_index": i,
+            "narration_text": shot.narration_text,
+            "llm_characters": shot.characters,
+        })
+
+    prompt = (
+        f"Resolve visible characters for Episode {episode_num} shots.\n\n"
+        f"Known characters in this arc: {arc_characters}\n\n"
+        f"Shots:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+    try:
+        raw = scene_prompt_client.generate_json(
+            prompt=prompt, system=_CHARACTER_RESOLVE_SYSTEM, temperature=0.1
+        )
+    except Exception as exc:
+        logger.warning(
+            "Character resolution LLM call failed ({}) — keeping existing | episode={}",
+            exc, episode_num,
+        )
+        return shots
+
+    if not isinstance(raw, list):
+        logger.warning(
+            "Character resolution returned non-list (type={}) — keeping existing | episode={}",
+            type(raw).__name__, episode_num,
+        )
+        return shots
+
+    shots = list(shots)
+    resolved = 0
+    changed = 0
+
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("shot_index")
+        if not isinstance(idx, int) or idx < 0 or idx >= len(shots):
+            continue
+
+        new_chars = item.get("characters")
+        if not isinstance(new_chars, list):
+            continue
+
+        # Validate: all returned names must be in arc_characters (exact match).
+        # Unknown names are logged and dropped to prevent hallucinations.
+        valid_chars: List[str] = []
+        for name in new_chars:
+            if name in arc_characters:
+                valid_chars.append(name)
+            else:
+                logger.warning(
+                    "Character resolution returned unknown name {!r} — dropped | episode={} shot={}",
+                    name, episode_num, idx,
+                )
+        # Enforce cap of 2 (IPAdapter dual workflow limit)
+        valid_chars = valid_chars[:2]
+
+        old_chars = shots[idx].characters
+        # Save raw LLM list before override (for debug / alignment report)
+        shots[idx] = shots[idx].model_copy(update={
+            "characters_raw": list(old_chars),
+            "characters": valid_chars,
+        })
+        resolved += 1
+        if set(valid_chars) != set(old_chars):
+            changed += 1
+            logger.debug(
+                "Characters updated | episode={} shot={} old={} new={}",
+                episode_num, idx, old_chars, valid_chars,
+            )
+
+    logger.info(
+        "Character resolution done | episode={} resolved={}/{} changed={}",
+        episode_num, resolved, len(shots), changed,
+    )
+    return shots
+
+
+def _has_concrete_action(shot: ShotScript) -> bool:
+    """Return True if the shot's visual_brief has a non-generic concrete action.
+
+    When True, the rule-based action-injection pass is skipped to prevent tag
+    leaking from previous shots or overriding an already-specific action.
+    Object-rule injection still runs regardless.
+    """
+    brief = shot.visual_brief
+    if brief is None:
+        return False
+    primary_action = brief.actions[0].strip().lower() if brief.actions else ""
+    if not primary_action:
+        return False
+    # If the action is in the generic set, it is NOT concrete enough
+    return not any(generic in primary_action for generic in _GENERIC_ACTIONS)
+
+
 def _align_scene_prompt_with_narration(
     shots: List[ShotScript],
     episode_num: int,
@@ -1285,7 +1587,9 @@ def _align_scene_prompt_with_narration(
 
     Two-tier pass:
     1. ACTION rules — insert at position 2 (right after location).
-    2. OBJECT rules — append at end (all positions are content now, no metadata suffix).
+       SKIPPED when the shot already has a concrete (non-generic) visual_brief
+       action, to prevent tag leaking across shots.
+    2. OBJECT rules — append at end (always runs).
     """
     aligned = 0
     updated: List[ShotScript] = []
@@ -1298,6 +1602,9 @@ def _align_scene_prompt_with_narration(
         action_tags: List[str] = []
         object_tags: List[str] = []
 
+        # Action rules always run: narration keywords (e.g. "khai quật", "nạy nắp")
+        # produce more specific visual tags than the LLM brief.
+        # Deduplication is handled by the `tag.lower() not in scene_lower` guard.
         for pattern, tag in _SCENE_ALIGN_ACTION_RULES:
             if pattern.search(narration) and tag.lower() not in scene_lower:
                 action_tags.append(tag)

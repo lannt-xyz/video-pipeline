@@ -168,7 +168,7 @@ _SCENE_DETAIL_BOOST_TAGS = (
 # Strip them from LLM output to avoid wasting tag positions.
 _METADATA_STRIP_TAGS = frozenset([
     "sfw", "fully clothed", "high collar", "long sleeves",
-    "anime style", "manhua art style", "no text", "no watermarks",
+    "anime style", "no text", "no watermarks",
     "masterpiece", "best quality", "highly detailed",
     *_SCENE_DETAIL_BOOST_TAGS,
 ])
@@ -449,7 +449,12 @@ _NEGATIVE_BASE = (
     "speech bubble, subtitle, caption, banner, label, "
     # General quality
     "lowres, bad anatomy, bad hands, error, "
-    "worst quality, low quality, blurry, jpeg artifacts"
+    "worst quality, low quality, blurry, jpeg artifacts, "
+    # Western architecture / Christian symbols — blocked by default (story is Chinese)
+    "christian cross, crucifix, western tombstone, grave cross, western grave marker, "
+    "gothic cross, church, chapel, cathedral, marble headstone, stone cross, "
+    "western cemetery, roman architecture, european architecture, "
+    "(cross:1.5), (crucifix:1.5), (church:1.4)"
 )
 
 _THUMBNAIL_LIGHTING_TAGS = (
@@ -553,7 +558,7 @@ def _build_shot_image_params(
     seed: int,
     artifact_hints_by_name: dict[str, list[str]] | None = None,
     init_image_path: "Path | None" = None,
-    denoise: float = 0.70,
+    denoise: float = 0.50,
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
@@ -663,6 +668,10 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     vram_manager.acquire(VRAMConsumer.COMFYUI)
     vram_manager.health_check_comfyui()
 
+    # Auto-generate anchors for any character that is missing them
+    from image_gen.character_gen import generate_character_anchors
+    generate_character_anchors(force=False)
+
     script = load_episode_script(episode_num)
     # Decompose shots into multi-frame structure
     script = script.model_copy(update={"shots": decompose_all_shots(script.shots)})
@@ -689,7 +698,6 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
         # Generate each frame for this shot
         frames = shot.frames if shot.frames else [None]
-        shot_frame0_path: "Path | None" = None  # fan-out: frames 1-3 all use frame-0 as init
         for fidx, frame in enumerate(frames):
             # Use frame-aware path when multi-frame, legacy path when single frame
             if len(frames) > 1:
@@ -702,8 +710,6 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                     "Image exists, skipping | episode={} shot={} frame={}",
                     episode_num, idx, fidx,
                 )
-                if fidx == 0:
-                    shot_frame0_path = output_path
                 continue
 
             # Use frame.scene_prompt (with camera_tag prepended) if available,
@@ -719,26 +725,23 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                 if baseline and baseline.split(",")[0].strip() not in prompt_text:
                     prompt_text = baseline + ", " + prompt_text
 
-            # Continuity: shots in the same scene_id share the same seed base
-            # so background composition stays consistent across the location.
-            # Frames within the same shot also share the seed — only camera_tag differs,
-            # which is enough to drive the zoom/pan progression.
+            # All frames use txt2img. Consistency across frames is enforced by:
+            #   - same seed (all frames of a shot share the same seed so SDXL starts
+            #     from identical noise → same spatial layout / character placement)
+            #   - same IPAdapter anchor (same character face across all frames)
+            #   - same environment tags (location + lighting shared via scene_env_baselines)
+            # Only the camera_tag prefix and per-frame action (from brief.actions) change,
+            # so each frame shows the narration progression at a different zoom level.
             if scene_id:
                 seed = _scene_id_seed(scene_id, episode_num)
             else:
                 seed = episode_num * 10000 + idx * 100
 
-            # Frame 0 = txt2img; frames 1+ = img2img fan-out from frame-0.
-            # Fan-out (not chain) prevents artifact accumulation across the sequence.
-            init_path = shot_frame0_path if fidx > 0 else None
             workflow, replacements = _build_shot_image_params(
                 prompt_text, char_anchor_pairs, seed, artifact_hints_by_name,
-                init_image_path=init_path,
             )
 
             comfyui_client.generate_image(workflow, replacements, output_path)
-            if fidx == 0:
-                shot_frame0_path = output_path
             logger.info(
                 "Image generated | episode={} shot={} frame={} workflow={}",
                 episode_num, idx, fidx, Path(workflow).stem,

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List
 
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from config.settings import settings
 from llm.client import summary_client as ollama_client
@@ -54,9 +54,11 @@ Return a JSON object with EXACTLY this schema:
 }"""
 
 
-# Vietnamese text averages ~2 chars/token; reserve 1000 tokens for system prompt + template
+# Vietnamese text averages ~2 chars/token; reserve tokens for system prompt + output headroom.
+# Cap at 6000 tokens of content (~12000 chars) so each chunk processes ≤2 chapters at a time,
+# keeping individual LLM calls within the model's reliable generation window.
 _CHARS_PER_TOKEN = 2
-_CONTEXT_OVERHEAD_TOKENS = 1000
+_CONTEXT_OVERHEAD_TOKENS = 26768  # 32768 - 6000 = 6000 available content tokens
 _ID_LIKE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
 
 
@@ -214,7 +216,11 @@ def _is_arc_cache_fresh(arc_path: Path) -> bool:
         return False
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=2, max=15),
+    retry=retry_if_not_exception_type(RetryError),
+)
 def _summarize_chunk(chapters_text: str, chunk_index: int, episode_num: int) -> str:
     prompt = f"Tóm tắt các chương sau:\n\n{chapters_text}"
     logger.debug("Summarizing chunk {} for episode {}", chunk_index, episode_num)
@@ -266,7 +272,11 @@ def _fallback_key_events_from_chunks(chunk_summaries: List[str]) -> List[str]:
     return [merged[:240]]
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=2, max=15),
+    retry=retry_if_not_exception_type(RetryError),
+)
 def _synthesize_arc(chunk_summaries: List[str], episode_num: int) -> ArcOverview:
     # Cap each chunk summary to avoid exceeding context window
     _MAX_CHUNK_CHARS = 1500

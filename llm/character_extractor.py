@@ -320,7 +320,7 @@ def _default_character(name: str) -> Character:
         description=(
             f"{name}, 1boy, male, young xianxia cultivator, handsome face, "
             "sharp eyes, traditional chinese robes, long dark hair, "
-            "manhua art style, full body portrait"
+            "full body portrait"
         ),
     )
 

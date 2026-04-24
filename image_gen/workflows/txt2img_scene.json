@@ -60,22 +60,6 @@
         "3",
         1
       ],
-      "lora_name": "manhua_style_v2.safetensors",
-      "strength_model": 1.0,
-      "strength_clip": 1.0
-    }
-  },
-  "5": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": [
-        "4",
-        0
-      ],
-      "clip": [
-        "4",
-        1
-      ],
       "lora_name": "dark_horror_atmosphere.safetensors",
       "strength_model": 0.75,
       "strength_clip": 0.75
@@ -84,9 +68,9 @@
   "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, sfw, fully clothed, anime style, manhua art style, cinematic volumetric lighting, eerie unsettling atmosphere, ominous shadows creeping, masterpiece, best quality, highly detailed, cinematic, dark atmosphere, eerie mood, horror tone, no text, no watermarks",
+      "text": "__SCENE_PROMPT__, traditional chinese rural setting, east asian visual aesthetic, sfw, fully clothed, anime style, cinematic volumetric lighting, eerie unsettling atmosphere, ominous shadows creeping, masterpiece, best quality, highly detailed, cinematic, dark atmosphere, eerie mood, horror tone, no text, no watermarks",
       "clip": [
-        "5",
+        "4",
         1
       ]
     }
@@ -96,7 +80,7 @@
     "inputs": {
       "text": "__NEGATIVE_PROMPT__, nsfw",
       "clip": [
-        "5",
+        "4",
         1
       ]
     }
@@ -113,7 +97,7 @@
     "class_type": "KSampler",
     "inputs": {
       "model": [
-        "5",
+        "4",
         0
       ],
       "positive": [

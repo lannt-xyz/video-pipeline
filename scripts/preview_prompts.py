@@ -75,7 +75,7 @@ def preview_anchors(char_filter: list[str] | None, print_json: bool) -> None:
             scene_prompt = (
                 f"{character.description}, "
                 f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
-                "anime style, manhua art style, plain background, "
+                "anime style, plain background, "
                 "detailed face, high quality, masterpiece, best quality, ultra detailed"
             )
             replacements = {

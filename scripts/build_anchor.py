@@ -26,7 +26,7 @@ from loguru import logger
 from config.settings import settings
 from image_gen.character_gen import _generate_single_anchor
 from llm.character_extractor import _sanitize_description
-from llm.profile_builder import _derive_tags, _open_db, _sanitize_unknown, build_markdown
+from llm.profile_builder import _derive_tags, _open_db, _sanitize_unknown, _write_profile, build_markdown
 from models.schemas import Character
 
 
@@ -73,7 +73,7 @@ def build_anchor(char_id: str, chars_dir: Path, con, *, force: bool = False) -> 
             char.gender = "unknown"
             char.description = _sanitize_unknown(char.description)
 
-        json_path.write_text(char.model_dump_json(indent=2), encoding="utf-8")
+        _write_profile(json_path, char)
         logger.success("Profile built | id={} gender={}", char_id, char.gender)
 
     # --- Step 4: ComfyUI anchor images ---

@@ -21,8 +21,27 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config.settings import settings
 from llm.character_extractor import _sanitize_description, _slugify
-from llm.client import ollama_client
+from llm.client import image_prompt_client
 from models.schemas import Character
+
+
+def _write_profile(json_path: Path, char: Character) -> None:
+    """Write profile.json while preserving any existing anchor_path on disk.
+
+    model_dump_json() resets anchor_path to None (the model default).
+    This helper reads the existing anchor_path from disk and restores it
+    so a re-build never silently removes an already-generated anchor reference.
+    """
+    existing_anchor: str | None = None
+    if json_path.exists():
+        try:
+            existing_anchor = json.loads(json_path.read_text(encoding="utf-8")).get("anchor_path")
+        except Exception:
+            pass
+    data = json.loads(char.model_dump_json(indent=2))
+    if existing_anchor and not data.get("anchor_path"):
+        data["anchor_path"] = existing_anchor
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -528,7 +547,7 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
 def _derive_tags(markdown_text: str) -> dict[str, Any]:
-    result = ollama_client.generate_json(
+    result = image_prompt_client.generate_json(
         prompt=markdown_text,
         system=_PROFILE_SYSTEM,
         temperature=0.2,
@@ -738,7 +757,7 @@ def build_profiles_for_episode(
                     char.gender = "unknown"
                     char.description = _sanitize_unknown(char.description)
 
-                json_path.write_text(char.model_dump_json(indent=2), encoding="utf-8")
+                _write_profile(json_path, char)
                 logger.info("Built profile | id={} gender={}", char_id, char.gender)
                 built += 1
 
@@ -853,7 +872,7 @@ def build_all_profiles(force: bool = False) -> list[Character]:
                     char.gender = "unknown"
                     char.description = _sanitize_unknown(char.description)
 
-                json_path.write_text(char.model_dump_json(indent=2), encoding="utf-8")
+                _write_profile(json_path, char)
                 logger.info("Built profile | id={} gender={}", char_id, char.gender)
                 built += 1
 
@@ -938,7 +957,7 @@ if __name__ == "__main__":
                         char.gender = "unknown"
                         char.description = _sanitize_unknown(char.description)
 
-                    json_path.write_text(char.model_dump_json(indent=2), encoding="utf-8")
+                    _write_profile(json_path, char)
                     print(f"[json] {json_path}")
                 except Exception as exc:
                     print(f"[fail] {char_id} — {exc}")

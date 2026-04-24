@@ -58,7 +58,7 @@ def _build_anchor_scene_prompt(character: Character, angle_tags: str) -> str:
         f"({character.description}:1.15), "
         f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
         f"{_ANCHOR_ETHNICITY_POSITIVE}, "
-        "anime style, manhua art style, plain background, "
+        "anime style, plain background, "
         "detailed face, high quality, masterpiece, best quality, ultra detailed"
     )
 

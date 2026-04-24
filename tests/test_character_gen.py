@@ -14,4 +14,3 @@ class TestCharacterAnchorPrompt:
         assert "east asian facial features" in prompt
         assert "chinese facial features" in prompt
         assert "looking at viewer, front view" in prompt
-        assert "manhua art style" in prompt

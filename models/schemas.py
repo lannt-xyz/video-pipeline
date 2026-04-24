@@ -43,11 +43,19 @@ class ShotVisualBrief(BaseModel):
     """
 
     subjects: List[str]        # role tags, max 2, no character names (e.g. "hooded daoist figure")
-    action: str                # specific observable action with verb + direction/result
+    actions: List[str] = []    # 1-3 micro-events in timeline order; actions[i] maps to frame[i]
     setting: str               # physical location with visual detail
     key_objects: List[str]     # foreground props, max 4
     mood_lighting: str         # "light source + color palette + effect" format
     composition: str = ""      # camera framing tag; empty → mapped from camera_flow
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def coerce_action_string(cls, v: object) -> List[str]:
+        """Backward compat: accept legacy single-string 'action' passed as the value."""
+        if isinstance(v, str):
+            return [v] if v.strip() else []
+        return v if isinstance(v, list) else []
 
 
 class ShotScript(BaseModel):
@@ -58,6 +66,7 @@ class ShotScript(BaseModel):
     duration_sec: float = 6.0
     is_key_shot: bool = False
     characters: List[str] = []  # [] = scene-only shot, no IPAdapter
+    characters_raw: Optional[List[str]] = None  # raw LLM list before Phase 1 resolution; debug only
     camera_flow: CameraFlow = CameraFlow.WIDE_TO_CLOSE
     frames: List[FrameScript] = []  # populated by frame_decomposer, not LLM
     scene_id: Optional[str] = None  # shared across shots in the same physical location, e.g. "coffin_shop"

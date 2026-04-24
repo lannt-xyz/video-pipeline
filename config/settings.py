@@ -56,9 +56,15 @@ class Settings(BaseSettings):
     # GitHub Models API (for script/scene-prompt generation)
     # Provider: "ollama" | "github" — controls which backend scriptwriter uses
     script_provider: str = "ollama"
+    # Provider for ComfyUI image-prompt generation (scene_prompt + anchor tag derivation)
+    # "ollama" uses scene_prompt_model; "github" uses github_model (same creds as script_provider)
+    image_prompt_provider: str = "ollama"
     github_api_url: str = "https://models.inference.ai.azure.com"
     github_model: str = "gpt-4.1"
     github_rpm: int = 10  # proactive rate limit (requests/min); gpt-5=1, gpt-4.1=10
+    # Max input tokens per request (system + user). gpt-4.1 free tier = 8000 total.
+    # User content is truncated to (github_max_input_tokens - system_token_budget) before sending.
+    github_max_input_tokens: int = 7500
     # GitHub token: set via env var PIPELINE_GITHUB_TOKEN (never hardcode)
     github_token: str = ""
     llm_max_retries: int = 3

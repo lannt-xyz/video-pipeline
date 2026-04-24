@@ -27,16 +27,20 @@ scene_prompt_json_format: true
 summary_json_format: false
 # Set false when llm_model does not support Ollama constrained JSON decoding
 llm_json_format: false
-llm_timeout: 120
+llm_timeout: 300
 llm_max_retries: 3
 llm_context_size: 32768
 
 # GitHub Models API — used when script_provider = "github"
 # Switch script/scene-prompt generation to GPT-5 or gpt-4.1 via GitHub API
 script_provider: "ollama"       # "ollama" | "github"
+# Controls ComfyUI image-prompt generation: scene_prompt (scriptwriter) + anchor tag derivation
+# "ollama" uses scene_prompt_model; "github" uses github_model (shared creds with script_provider)
+image_prompt_provider: "github"  # "ollama" | "github"
 github_api_url: "https://models.inference.ai.azure.com"
 github_model: "gpt-4.1"      # gpt-5 has 1 req/min limit even on Pro+; gpt-4.1 has much higher limits
 github_rpm: 10                # proactive throttle: requests per minute (gpt-4.1=10, gpt-5=1)
+github_max_input_tokens: 7000 # gpt-4.1 free tier cap = 8000 tokens total; 7000 leaves room for system prompt + output
 # Token: set PIPELINE_GITHUB_TOKEN env var — never put the real token here
 
 # ComfyUI configuration
@@ -80,7 +84,6 @@ assets_dir: "assets"
 
 # LoRA weights for ComfyUI (Pony V6 XL)
 lora_weights:
-  manhua_style: 0.7
   xianxia_fantasy: 0.5
   dark_horror: 0.6
   ink_wash: 0.0

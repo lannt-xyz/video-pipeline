@@ -232,12 +232,10 @@ class OllamaClient:
 ollama_client = OllamaClient(json_format=settings.llm_json_format)
 # Phase-specific clients — model falls back to llm_model when the phase fields are empty.
 summary_client = OllamaClient(model=settings.effective_summary_model, json_format=settings.summary_json_format)
-# scene_prompt_client: used for ComfyUI scene_prompt narration-alignment rewrite pass.
-# Falls back to script_model → llm_model when scene_prompt_model is empty.
-scene_prompt_client = OllamaClient(
-    model=settings.effective_scene_prompt_model,
-    json_format=settings.scene_prompt_json_format,
-)
+# scene_prompt_client: alias kept for backward-compat; built by get_image_prompt_client() below.
+# Controlled by image_prompt_provider ("ollama" | "github").
+# Defined after GitHubLLMClient class — see bottom of file.
+scene_prompt_client: "OllamaClient | GitHubLLMClient"
 
 
 def _github_retry_wait(retry_state) -> float:  # type: ignore[type-arg]
@@ -291,6 +289,18 @@ class GitHubLLMClient:
         response_format: Optional[str] = None,
     ) -> str:
         """Call /chat/completions and return assistant message content."""
+        # Truncate user prompt to stay within github_max_input_tokens.
+        # Reserve ~500 tokens for system prompt overhead; Vietnamese ~2 chars/token.
+        system_token_budget = len(system) // 2 if system else 0
+        max_user_tokens = max(settings.github_max_input_tokens - system_token_budget - 200, 1000)
+        max_user_chars = max_user_tokens * 2  # Vietnamese: ~2 chars per token
+        if len(prompt) > max_user_chars:
+            logger.warning(
+                "GitHub prompt truncated | original={} chars → {} chars (max_user_tokens={})",
+                len(prompt), max_user_chars, max_user_tokens,
+            )
+            prompt = prompt[:max_user_chars]
+
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -371,5 +381,25 @@ def get_script_client() -> "OllamaClient | GitHubLLMClient":
     )
 
 
-# Module-level instance for backward-compat imports (scriptwriter uses this)
+def get_image_prompt_client() -> "OllamaClient | GitHubLLMClient":
+    """Factory: return the correct LLM client for ComfyUI image-prompt generation.
+
+    Controls two tasks together:
+    - scene_prompt rewrite pass (scriptwriter)
+    - anchor character tag derivation (profile_builder)
+
+    "ollama" uses scene_prompt_model; "github" uses the shared github_model credentials.
+    """
+    if settings.image_prompt_provider == "github":
+        return GitHubLLMClient()
+    return OllamaClient(
+        model=settings.effective_scene_prompt_model,
+        json_format=settings.scene_prompt_json_format,
+    )
+
+
+# Module-level instances for backward-compat imports
 script_client = get_script_client()
+image_prompt_client = get_image_prompt_client()
+# scene_prompt_client is an alias for image_prompt_client (scriptwriter imports it by this name)
+scene_prompt_client = image_prompt_client

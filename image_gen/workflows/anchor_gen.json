@@ -1,11 +1,10 @@
 {
   "_meta": {
-    "description": "SDXL txt2img anchor generation. Same 4 LoRAs as txt2img_ipadapter.json including dark_horror_atmosphere at matching strength (0.4) so anchor and chapter shots share the same aesthetic domain for IPAdapter feature matching.",
+    "description": "SDXL txt2img anchor generation. Same 3 LoRAs as txt2img_ipadapter.json (ink_wash, xianxia, dark_horror) at matching strength for aesthetic consistency.",
     "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
     "loras": [
       "ink_wash_painting.safetensors",
       "xianxia_fantasy.safetensors",
-      "manhua_style_v2.safetensors",
       "dark_horror_atmosphere.safetensors"
     ],
     "placeholders": {
@@ -73,22 +72,6 @@
         "3",
         1
       ],
-      "lora_name": "manhua_style_v2.safetensors",
-      "strength_model": 0.7,
-      "strength_clip": 0.7
-    }
-  },
-  "5": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": [
-        "4",
-        0
-      ],
-      "clip": [
-        "4",
-        1
-      ],
       "lora_name": "dark_horror_atmosphere.safetensors",
       "strength_model": 0.4,
       "strength_clip": 0.4
@@ -99,7 +82,7 @@
     "inputs": {
       "text": "__SCENE_PROMPT__, masterpiece, best quality, highly detailed",
       "clip": [
-        "5",
+        "4",
         1
       ]
     }
@@ -109,7 +92,7 @@
     "inputs": {
       "text": "__NEGATIVE_PROMPT__, nsfw",
       "clip": [
-        "5",
+        "4",
         1
       ]
     }
@@ -126,7 +109,7 @@
     "class_type": "KSampler",
     "inputs": {
       "model": [
-        "5",
+        "4",
         0
       ],
       "positive": [

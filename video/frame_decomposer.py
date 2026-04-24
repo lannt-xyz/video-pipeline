@@ -183,18 +183,56 @@ def decompose_shot(shot: ShotScript) -> List[FrameScript]:
     Returns 1 frame for short shots (<4s) or static flows,
     up to settings.frames_per_shot frames for longer shots with dynamic camera flows.
     Deterministic — no LLM calls.
+
+    When visual_brief.actions has multiple entries, each action is injected into
+    the corresponding frame so the image visually matches the narration timeline.
     """
     flow_configs = _FLOW_FRAMES.get(shot.camera_flow, _FLOW_FRAMES[CameraFlow.WIDE_TO_CLOSE])
 
     # Short shots or single-frame flows: only use the first frame config
     if shot.duration_sec < _MIN_DURATION_FOR_MULTI_FRAME or len(flow_configs) == 1:
-        tag, motion = flow_configs[0]
-        # For single frame, still strip excess concepts
         return _build_frame_prompts(shot.scene_prompt, flow_configs, num_frames=1)
 
     # Multi-frame: content-aware distribution
     max_frames = min(settings.frames_per_shot, len(flow_configs))
-    return _build_frame_prompts(shot.scene_prompt, flow_configs, num_frames=max_frames)
+    frames = _build_frame_prompts(shot.scene_prompt, flow_configs, num_frames=max_frames)
+
+    # Per-frame action override from visual_brief.actions (Phase 2).
+    # If brief has 2+ actions, replace the action tag in frame[i] with actions[i].
+    brief_actions = (
+        shot.visual_brief.actions
+        if shot.visual_brief and len(shot.visual_brief.actions) > 1
+        else None
+    )
+    if not brief_actions:
+        return frames
+
+    updated_frames: list[FrameScript] = []
+    for i, frame in enumerate(frames):
+        if i >= len(brief_actions):
+            updated_frames.append(frame)
+            continue
+        action_tag = brief_actions[i].strip()
+        if not action_tag:
+            updated_frames.append(frame)
+            continue
+        # Extract scene_prompt minus old primary action (actions[0]) and inject new per-frame action.
+        primary_action = brief_actions[0].strip()
+        old_tags = [t.strip() for t in frame.scene_prompt.split(",") if t.strip()]
+        # Remove the primary action tag from all frames (each frame gets its own action now)
+        filtered = [t for t in old_tags if t != primary_action]
+        # Find camera_tag position (first tag) and inject action immediately after it
+        if filtered:
+            cam_tag = filtered[0]
+            rest = filtered[1:]
+            new_tags = [cam_tag, action_tag] + rest
+        else:
+            new_tags = [action_tag]
+        updated_frames.append(
+            frame.model_copy(update={"scene_prompt": ", ".join(new_tags)})
+        )
+
+    return updated_frames
 
 
 def decompose_all_shots(shots: List[ShotScript]) -> List[ShotScript]:
