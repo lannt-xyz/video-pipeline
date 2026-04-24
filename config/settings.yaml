@@ -36,7 +36,7 @@ llm_context_size: 32768
 script_provider: "ollama"       # "ollama" | "github"
 # Controls ComfyUI image-prompt generation: scene_prompt (scriptwriter) + anchor tag derivation
 # "ollama" uses scene_prompt_model; "github" uses github_model (shared creds with script_provider)
-image_prompt_provider: "github"  # "ollama" | "github"
+image_prompt_provider: "ollama"  # "ollama" | "github"
 github_api_url: "https://models.inference.ai.azure.com"
 github_model: "gpt-4.1"      # gpt-5 has 1 req/min limit even on Pro+; gpt-4.1 has much higher limits
 github_rpm: 10                # proactive throttle: requests per minute (gpt-4.1=10, gpt-5=1)
