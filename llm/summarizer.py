@@ -137,6 +137,9 @@ def _load_character_lookup() -> tuple[dict[str, str], dict[str, str]]:
 def _normalize_characters_in_episode(raw_names: List[str]) -> List[str]:
     """Normalize character list to canonical Vietnamese names.
 
+    - Strips Vietnamese honorific prefixes ("Lão đạo sĩ X" → "X") before lookup.
+    - Drops generic placeholders ("Người đàn ông bí ẩn", "Ai đó", etc.) that
+      cannot anchor IPAdapter and cause per-shot face drift.
     - Maps character_id/alias to canonical name via wiki_characters.
     - Drops unresolved id-like tokens (e.g. qing_yun_zi).
     - Preserves order and deduplicates.
@@ -152,7 +155,29 @@ def _normalize_characters_in_episode(raw_names: List[str]) -> List[str]:
             continue
 
         lower = token.lower()
+
+        # Filter generic placeholders BEFORE any lookup — these are narrative
+        # stand-ins that never resolve to a named character with an anchor.
+        if _is_placeholder_character(lower):
+            logger.debug("Dropping placeholder character name | name={}", token)
+            continue
+
+        # Try exact alias/id lookup first (wiki canonical form).
         canonical = alias_to_name.get(lower) or id_to_name.get(lower)
+
+        # If no exact match, try stripping common Vietnamese honorifics and
+        # re-looking up — this handles "Lão đạo sĩ Thanh Vân Tử" → "Thanh Vân Tử".
+        # Only accept the stripped form when it maps to a KNOWN canonical name;
+        # otherwise keep the original (stripping "Hiệu trưởng Chu" → "Chu" would
+        # break anchor lookup since the folder is `hieu_truong_chu/`).
+        if canonical is None:
+            stripped = _strip_vn_honorifics(token)
+            if stripped and stripped.lower() != lower:
+                stripped_lower = stripped.lower()
+                canonical = (
+                    alias_to_name.get(stripped_lower)
+                    or id_to_name.get(stripped_lower)
+                )
 
         if canonical is None and _ID_LIKE_RE.match(lower):
             logger.debug("Dropping unresolved character id token | token={}", token)
@@ -165,6 +190,46 @@ def _normalize_characters_in_episode(raw_names: List[str]) -> List[str]:
             normalized.append(final_name)
 
     return normalized
+
+
+# Vietnamese honorific prefixes that should be stripped when resolving to an
+# anchored character name. Ordered longest-first so multi-word prefixes match
+# before single-word ones (e.g. "Lão đạo sĩ " before "Lão ").
+_VN_HONORIFICS = (
+    "lão đạo sĩ ", "lão đạo sỹ ", "đại đạo sĩ ", "đạo sĩ ", "đạo sỹ ",
+    "đại sư ", "tiểu sư phụ ", "sư phụ ", "sư thúc ", "sư huynh ", "sư đệ ",
+    "hiệu trưởng ", "thầy ", "cô ",
+    "lão ", "tiểu ", "đại ",
+)
+
+# Pure placeholder patterns — narrative "mysterious man" style labels that
+# cannot be anchored. Matched as prefix (with optional adjective suffix).
+_PLACEHOLDER_PREFIXES = (
+    "người đàn ông", "người phụ nữ", "người con gái", "người con trai",
+    "người lạ", "người vô danh",
+    "ai đó", "một người", "có người", "có kẻ", "kẻ lạ", "kẻ nào đó",
+    "cô gái lạ", "chàng trai lạ",
+)
+
+
+def _strip_vn_honorifics(name: str) -> str:
+    """Strip Vietnamese honorific prefixes from a character name.
+
+    Returns the original string if no honorific matches.
+    """
+    lower = name.lower()
+    for prefix in _VN_HONORIFICS:
+        if lower.startswith(prefix):
+            return name[len(prefix):].strip()
+    return name
+
+
+def _is_placeholder_character(name_lower: str) -> bool:
+    """Return True when name is a generic narrative placeholder (no real identity)."""
+    for prefix in _PLACEHOLDER_PREFIXES:
+        if name_lower.startswith(prefix):
+            return True
+    return False
 
 
 def _infer_characters_from_texts(texts: List[str], max_count: int = 12) -> List[str]:

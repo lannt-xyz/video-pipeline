@@ -38,9 +38,10 @@ PACING RULE — STRICTLY ENFORCED:
 - Shot 1 and Shot 2: duration_sec MUST be 2 or 3.
 - Shot 1 and Shot 2: narration_text MUST be 10 words or fewer — TTS must fit within 2–3 seconds.
 - Shots 3–8: duration_sec = 8 for standard shots, 10 for climactic action shots.
-- Shots 3–8: narration_text MUST be 25–35 words (2–4 sentences) — TTS must fill 8–11 seconds each.
-- TOTAL narration_text across ALL 8 shots MUST be at least 180 words. At ~3 words/second Vietnamese TTS (edge-tts vi-VN-HoaiMyNeural), that means at least 60 seconds of TTS.
-- COUNT YOUR WORDS before outputting each shot. If narration_text for shot 3–8 is fewer than 25 words, REWRITE IT.
+- Shots 3–8: narration_text MUST be 28–40 words (3–4 full sentences) — TTS must fill 8–11 seconds each.
+- TOTAL narration_text across ALL 8 shots MUST be AT LEAST 210 words. At ~3.5 words/second Vietnamese TTS (edge-tts vi-VN-HoaiMyNeural), that yields ≥60 seconds of TTS.
+- COUNT YOUR WORDS before outputting each shot. If narration_text for shot 3–8 is fewer than 28 words, REWRITE IT by adding descriptive detail (expand dialogue, add sensory detail, add character reaction).
+- HARD FAILURE: if the total is below 210 words your output WILL be rejected and you will be asked again.
 
 NARRATION LENGTH EXAMPLES:
 WRONG (too short for a 8s shot): "Lão đạo sĩ này sẽ mang Diệp Thiếu Dương về Mao Sơn để dạy nó đạo pháp." — 15 words, only ~5s TTS, leaves 3s of silence.
@@ -266,8 +267,9 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
         f"Arc Overview:\n{arc_text}\n\n"
         "Remember: 8-10 shots, EXACTLY 2-3 with is_key_shot=true, "
         "scene_prompt in English, narration_text in Vietnamese.\n"
-        "CRITICAL: shots 3-8 MUST each have 25-35 words in narration_text. "
-        "Total narration_text across all shots MUST be at least 180 words."
+        "CRITICAL: shots 3-8 MUST each have 28-40 words in narration_text. "
+        "Total narration_text across all shots MUST be AT LEAST 210 words "
+        "(below this the script WILL be rejected)."
     )
     result = ollama_client.generate_json(
         prompt=prompt, system=_SCRIPTWRITER_SYSTEM, temperature=0.7
@@ -277,6 +279,15 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
     # somewhat shorter scripts when the arc content is genuinely thin.
     # Outputs between 80–150 words are accepted with a WARNING for visibility.
     shots = result.get("shots", [])
+    if not isinstance(shots, list) or len(shots) < 6:
+        # LLM returned nothing usable (empty/missing/truncated). Retry.
+        logger.warning(
+            "Script rejected: shots missing or too few (got {}), retrying | episode={}",
+            len(shots) if isinstance(shots, list) else "non-list", episode_num,
+        )
+        raise ValueError(
+            f"shots missing or too few: got {len(shots) if isinstance(shots, list) else 'non-list'}"
+        )
     if isinstance(shots, list) and shots:
         # Ollama occasionally returns shots as JSON-encoded strings instead of
         # dicts. Parse those before counting so the validator doesn't spuriously
@@ -294,15 +305,28 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
             return ""
 
         total_words = sum(len(_narration_of(s).split()) for s in shots)
-        if total_words < 80:
+        # Vietnamese edge-tts (vi-VN-HoaiMyNeural) clocks ~3.5 wps empirically.
+        # Validator requires final video ≥57s, so we need ≥57*3.5 ≈ 200 words.
+        # Use 200 as hard floor; below this TTS undershoots and validation fails.
+        min_total = 200
+        if total_words < min_total:
+            # Identify short shots for diagnostics
+            short_shots = []
+            for idx, s in enumerate(shots):
+                w = len(_narration_of(s).split())
+                if idx >= 2 and w < 20:
+                    short_shots.append(f"shot{idx+1}={w}w")
             logger.warning(
-                "Script rejected: total_words={} < 80, retrying | episode={}",
-                total_words, episode_num,
+                "Script rejected: total_words={} < {}, retrying | episode={} short_shots={}",
+                total_words, min_total, episode_num, short_shots or "none",
             )
-            raise ValueError(f"narration too short: {total_words} words")
-        if total_words < 150:
+            raise ValueError(
+                f"narration too short: {total_words} words < {min_total}; "
+                f"short_shots={short_shots}"
+            )
+        if total_words < 210:
             logger.warning(
-                "Script accepted but narration is short: total_words={} < 150 | episode={}",
+                "Script accepted but narration is tight: total_words={} < 210 | episode={}",
                 total_words, episode_num,
             )
     return result
@@ -1317,6 +1341,24 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
     episode_shots = _normalize_key_shots(episode_shots, episode_num)
     episode_shots = _normalize_camera_flow(episode_shots, episode_num)
     episode_shots = _backfill_characters(episode_shots, arc.characters_in_episode, episode_num)
+
+    # 5b. Hard total-words gate — final assembled shots (includes carry-over).
+    # Prevents running expensive image/tts/video phases on scripts that will
+    # fail the downstream duration validator. 200 words ≈ 57s TTS @ 3.5 wps.
+    _total_words = sum(len(s.narration_text.split()) for s in episode_shots)
+    _min_total = 200
+    if _total_words < _min_total:
+        per_shot = [
+            f"shot{i+1}={len(s.narration_text.split())}w"
+            for i, s in enumerate(episode_shots)
+        ]
+        raise ValueError(
+            f"Episode {episode_num} script too short: total_words={_total_words} "
+            f"< {_min_total} (≈ {_total_words/3.5:.1f}s TTS, need ≥57s). "
+            f"Per-shot: {per_shot}. "
+            f"Rerun `--from-phase llm` to regenerate; if this persists, carry-over "
+            f"from previous episode may be too short and LLM retries exhausted."
+        )
     # Phase 1: LLM character resolution — distinguish subject vs object_visible per shot
     episode_shots = _resolve_shot_characters(episode_shots, arc.characters_in_episode, episode_num)
     # Phase 3: Build first-event context from arc key_events for hook shot anchoring.
@@ -1627,15 +1669,35 @@ def _resolve_shot_characters(
 
         # Validate: all returned names must be in arc_characters (exact match).
         # Unknown names are logged and dropped to prevent hallucinations.
+        # Also strip Vietnamese honorifics + drop placeholders so "Lão đạo sĩ X"
+        # resolves to "X" and "Người đàn ông bí ẩn" is filtered out.
+        from llm.summarizer import _strip_vn_honorifics, _is_placeholder_character
+        arc_lower = {n.lower(): n for n in arc_characters}
         valid_chars: List[str] = []
         for name in new_chars:
-            if name in arc_characters:
-                valid_chars.append(name)
-            else:
+            if not isinstance(name, str) or not name.strip():
+                continue
+            low = name.strip().lower()
+            if _is_placeholder_character(low):
+                logger.debug(
+                    "Character resolution dropped placeholder {!r} | episode={} shot={}",
+                    name, episode_num, idx,
+                )
+                continue
+            # Exact match first
+            canonical = arc_lower.get(low)
+            # Honorific-stripped match (handles "Lão đạo sĩ Thanh Vân Tử" → "Thanh Vân Tử")
+            if canonical is None:
+                stripped = _strip_vn_honorifics(name).lower()
+                canonical = arc_lower.get(stripped)
+            if canonical is None:
                 logger.warning(
                     "Character resolution returned unknown name {!r} — dropped | episode={} shot={}",
                     name, episode_num, idx,
                 )
+                continue
+            if canonical not in valid_chars:
+                valid_chars.append(canonical)
         # Enforce cap of 2 (IPAdapter dual workflow limit)
         valid_chars = valid_chars[:2]
 

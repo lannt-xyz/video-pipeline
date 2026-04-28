@@ -263,10 +263,11 @@ class TestScriptwriter:
             characters_in_episode=["Diep Thieu Duong"],
         )
 
-        # 20 words per narration × 8 shots = 160 words — passes the 80-word minimum.
+        # 26 words per narration × 8 shots = 208 words — passes the 200-word minimum.
         long_narration = (
             "Đây là một đoạn lời dẫn đủ dài để vượt qua ngưỡng kiểm tra "
-            "tối thiểu của scriptwriter trong pipeline."
+            "tối thiểu của scriptwriter trong pipeline và đảm bảo TTS "
+            "có đủ âm thanh cho từng shot video của tập phim."
         )
         mock_raw = {
             "title": "Tập 1: Khởi Đầu",
@@ -316,7 +317,8 @@ class TestScriptwriter:
             "scene_prompt": "ruined shrine, fog",
             "narration_text": (
                 "Đây là một đoạn lời dẫn đủ dài để vượt qua ngưỡng kiểm tra "
-                "tối thiểu của scriptwriter trong pipeline."
+                "tối thiểu của scriptwriter trong pipeline và đảm bảo TTS "
+                "có đủ âm thanh cho từng shot video của tập phim."
             ),
             "duration_sec": 6,
             "is_key_shot": False,

@@ -885,16 +885,37 @@ def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
         audio_dir / f"shot-{i:02d}-mixed.aac" for i in range(len(script.shots))
     ]
 
-    # Patch duration_sec: use max(script, audio) so clips are never shorter than
-    # the scriptwriter's budget.  If TTS finishes early the zoompan animation
-    # continues (with silence); if TTS is longer the clip extends to fit.
-    # Also record actual_audio_sec so subtitle timing tracks real speech, not clip length.
-    for shot, audio_path in zip(script.shots, audio_paths):
-        if audio_path.exists():
-            actual = _probe_duration(audio_path)
-            if actual > 0:
-                shot.duration_sec = max(shot.duration_sec, actual)
-                shot.actual_audio_sec = actual
+    # SYNC: actual audio duration is AUTHORITATIVE for clip length.
+    # The scriptwriter's duration_sec is a BUDGET for narration planning only —
+    # once TTS is rendered, clip length MUST equal mixed audio length so that:
+    #   - no silent freeze at tail (viewer retention killer)
+    #   - karaoke subtitle end aligns with clip end
+    #   - shot-to-shot cross-fade happens the moment narration finishes
+    # The mixed audio already contains tts_lead_in_sec + tail padding, so using
+    # `actual` directly gives natural breath pacing without silent gaps.
+    # Fall back to planned duration only when the audio file is missing / unreadable.
+    for idx, (shot, audio_path) in enumerate(zip(script.shots, audio_paths)):
+        if not audio_path.exists():
+            logger.warning(
+                "Mixed audio missing, keeping planned duration | episode={} shot={} planned={}s",
+                episode_num, idx, shot.duration_sec,
+            )
+            continue
+        actual = _probe_duration(audio_path)
+        if actual <= 0:
+            logger.warning(
+                "Could not probe audio duration, keeping planned | episode={} shot={}",
+                episode_num, idx,
+            )
+            continue
+        drift = actual - shot.duration_sec
+        if abs(drift) > 3.0:
+            logger.warning(
+                "Audio/plan drift >3s | episode={} shot={} planned={}s actual={:.2f}s drift={:+.2f}s",
+                episode_num, idx, shot.duration_sec, actual, drift,
+            )
+        shot.duration_sec = actual
+        shot.actual_audio_sec = actual
 
     db.record_phase_start(episode_num, "video")
 
