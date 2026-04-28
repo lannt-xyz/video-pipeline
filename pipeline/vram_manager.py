@@ -25,6 +25,7 @@ class VRAMConsumer(str, Enum):
     NONE = "none"
     OLLAMA = "ollama"
     COMFYUI = "comfyui"
+    F5TTS = "f5tts"  # local CPU TTS — needs Ollama + ComfyUI VRAM cleared first
 
 
 class VRAMManager:
@@ -71,11 +72,15 @@ class VRAMManager:
             return
 
         # Always evict the opposite side, even if _current says NONE.
-        opposite = {
-            VRAMConsumer.OLLAMA: VRAMConsumer.COMFYUI,
-            VRAMConsumer.COMFYUI: VRAMConsumer.OLLAMA,
-        }.get(consumer)
-        if opposite is not None:
+        # F5TTS needs both Ollama and ComfyUI to release VRAM.
+        # Ollama and ComfyUI also evict F5TTS so its RAM is reclaimed.
+        _evict_map = {
+            VRAMConsumer.OLLAMA: [VRAMConsumer.COMFYUI, VRAMConsumer.F5TTS],
+            VRAMConsumer.COMFYUI: [VRAMConsumer.OLLAMA, VRAMConsumer.F5TTS],
+            VRAMConsumer.F5TTS: [VRAMConsumer.OLLAMA, VRAMConsumer.COMFYUI],
+        }
+        opposites = _evict_map.get(consumer, [])
+        for opposite in opposites:
             logger.info(
                 "VRAM evict: '{}' before acquiring '{}'",
                 opposite.value, consumer.value,
@@ -191,6 +196,7 @@ class VRAMManager:
         _handlers = {
             VRAMConsumer.OLLAMA: self._release_ollama,
             VRAMConsumer.COMFYUI: self._release_comfyui,
+            VRAMConsumer.F5TTS: self._release_f5tts,
         }
         handler = _handlers.get(consumer)
         if handler:
@@ -351,6 +357,26 @@ class VRAMManager:
             "_wait_vram_free() will give a final verdict.",
             _COMFYUI_FREE_MAX_RETRIES,
         )
+
+    def _release_f5tts(self) -> None:
+        """Unload the F5-TTS singleton from RAM so the next consumer can load cleanly.
+
+        F5-TTS runs on CPU, so this only frees system RAM (not VRAM), but it's
+        still good practice to evict it before returning VRAM to Ollama/ComfyUI
+        to avoid OOM on RAM-constrained machines.
+        """
+        import audio.tts as _tts_module
+        if getattr(_tts_module, "_f5tts_instance", None) is not None:
+            logger.info("Unloading F5-TTS model from RAM...")
+            _tts_module._f5tts_instance = None
+            try:
+                import gc
+                gc.collect()
+            except Exception:
+                pass
+            logger.info("F5-TTS model unloaded")
+        else:
+            logger.debug("F5-TTS singleton not loaded — nothing to unload")
 
 
 vram_manager = VRAMManager()

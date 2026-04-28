@@ -1,10 +1,13 @@
 import asyncio
 import re
+import tempfile
 import unicodedata
+import wave
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import edge_tts
+import httpx
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -22,6 +25,260 @@ _MAX_TTS_CHARS = 900
 
 # Sentence-ending punctuation used as preferred split points.
 _SPLIT_PUNCT = re.compile(r'(?<=[.!?。！？…,，;；:\n])')
+
+# ---------------------------------------------------------------------------
+# Piper TTS (local)
+# ---------------------------------------------------------------------------
+
+_piper_voice = None  # module-level singleton; loaded on first use
+
+
+def _parse_piper_model_path(model_name: str) -> str:
+    """Convert vi_VN-vivos-medium → vi/vi_VN/vivos/medium for HF URL."""
+    parts = model_name.split("-")
+    if len(parts) < 3:
+        raise ValueError(f"Unexpected piper model name format: {model_name!r}")
+    locale = parts[0]       # vi_VN
+    lang = locale.split("_")[0]  # vi
+    dataset = parts[1]      # vivos
+    quality = parts[2]      # medium
+    return f"{lang}/{locale}/{dataset}/{quality}"
+
+
+def _ensure_piper_model() -> Path:
+    """Download model files from Hugging Face if not already cached. Returns .onnx path."""
+    model_name = settings.piper_model
+    model_dir = Path(settings.piper_models_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    onnx_path = model_dir / f"{model_name}.onnx"
+    json_path = model_dir / f"{model_name}.onnx.json"
+
+    if onnx_path.exists() and json_path.exists():
+        return onnx_path
+
+    hf_path = _parse_piper_model_path(model_name)
+    base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{hf_path}"
+
+    for filename in [f"{model_name}.onnx", f"{model_name}.onnx.json"]:
+        dest = model_dir / filename
+        if dest.exists():
+            continue
+        url = f"{base_url}/{filename}"
+        logger.info("Downloading piper model file: {} → {}", url, dest)
+        with httpx.stream("GET", url, follow_redirects=True, timeout=120) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_bytes(chunk_size=65536):
+                    f.write(chunk)
+        logger.info("Downloaded piper model file: {}", filename)
+
+    return onnx_path
+
+
+def _get_piper_voice():
+    global _piper_voice
+    if _piper_voice is None:
+        from piper import PiperVoice  # lazy import — only loaded when provider=piper
+        onnx_path = _ensure_piper_model()
+        logger.info("Loading piper model: {}", onnx_path)
+        _piper_voice = PiperVoice.load(str(onnx_path))
+        logger.info("Piper model loaded")
+    return _piper_voice
+
+
+async def _piper_tts(text: str, output_path: Path) -> None:
+    """Synthesise text via local Piper model and save as MP3."""
+    tmp_wav = Path(tempfile.mktemp(suffix=".wav"))
+
+    # synthesize is CPU/sync — run in executor to avoid blocking event loop
+    def _synthesize() -> None:
+        voice = _get_piper_voice()
+        with wave.open(str(tmp_wav), "wb") as wav_file:
+            voice.synthesize_wav(text, wav_file)
+
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, _synthesize)
+
+        # Convert WAV → MP3 with post-processing:
+        # - atempo: speed up slightly for more engaging delivery
+        # - bass: +4dB warmth for horror narration
+        # - treble: +2dB clarity for consonant articulation
+        # - acompressor: normalize dynamics (Piper can be uneven)
+        speed = settings.piper_speed
+        af_chain = (
+            f"atempo={speed},"
+            "bass=g=4,"
+            "treble=g=2,"
+            "acompressor=threshold=-20dB:ratio=3:attack=5:release=50"
+        )
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", str(tmp_wav),
+            "-af", af_chain,
+            "-acodec", "libmp3lame", "-b:a", "192k",
+            str(output_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace") if stderr else "(no stderr)"
+            raise RuntimeError(f"FFmpeg WAV→MP3 failed: {err}")
+    finally:
+        tmp_wav.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# F5-TTS Vietnamese (local GPU)
+# ---------------------------------------------------------------------------
+
+_f5tts_instance = None  # module-level singleton; loaded on first use
+
+_F5TTS_HF_REPO = "hynt/F5-TTS-Vietnamese-ViVoice"
+_F5TTS_CKPT_FILE = "model_last.pt"
+_F5TTS_VOCAB_FILE = "config.json"  # repo uses config.json as vocab file
+
+# Default ref audio text — a neutral Vietnamese sentence read at normal pace
+_F5TTS_DEFAULT_REF_TEXT = (
+    "Xin chào, tôi là người kể chuyện. "
+    "Câu chuyện hôm nay sẽ đưa bạn vào một thế giới đầy bí ẩn và rùng rợn."
+)
+
+
+def _ensure_f5tts_model() -> tuple[Path, Path]:
+    """Download VI checkpoint from HuggingFace if not cached. Returns (ckpt_path, vocab_path)."""
+    model_dir = Path(settings.f5tts_model_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = model_dir / _F5TTS_CKPT_FILE
+    vocab_path = model_dir / "vocab.txt"  # saved locally as vocab.txt
+
+    base_url = f"https://huggingface.co/{_F5TTS_HF_REPO}/resolve/main"
+    for filename, dest in [(_F5TTS_CKPT_FILE, ckpt_path), ("config.json", vocab_path)]:
+        if dest.exists():
+            continue
+        url = f"{base_url}/{filename}"
+        logger.info("Downloading F5-TTS VI model: {} → {}", url, dest)
+        with httpx.stream("GET", url, follow_redirects=True, timeout=300) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_bytes(chunk_size=65536):
+                    f.write(chunk)
+        logger.info("Downloaded: {}", filename)
+
+    return ckpt_path, vocab_path
+
+
+def _ensure_ref_audio() -> Path:
+    """Return path to ref audio, generating from edge-tts if the configured file doesn't exist."""
+    ref_path = Path(settings.f5tts_ref_audio)
+    if ref_path.exists() and ref_path.stat().st_size > 0:
+        return ref_path
+
+    logger.info("ref audio not found at {} — generating from edge-tts", ref_path)
+    ref_path.parent.mkdir(parents=True, exist_ok=True)
+    import subprocess
+    # Generate ~10s reference clip via edge-tts synchronously (one-time setup)
+    result = subprocess.run(
+        ["python", "-c", f"""
+import asyncio, edge_tts
+async def gen():
+    c = edge_tts.Communicate({_F5TTS_DEFAULT_REF_TEXT!r}, "vi-VN-HoaiMyNeural")
+    await c.save("{ref_path}")
+asyncio.run(gen())
+"""],
+        capture_output=True, timeout=60,
+    )
+    if result.returncode != 0 or not ref_path.exists():
+        raise RuntimeError(
+            f"Failed to generate ref audio: {result.stderr.decode(errors='replace')}"
+        )
+    logger.info("Ref audio generated: {}", ref_path)
+    return ref_path
+
+
+def _get_f5tts():
+    global _f5tts_instance
+    if _f5tts_instance is None:
+        from f5_tts.api import F5TTS
+        ckpt_path, vocab_path = _ensure_f5tts_model()
+        device = settings.f5tts_device
+        logger.info("Loading F5-TTS VI model from {} on device={}", ckpt_path, device)
+        try:
+            # Use F5TTS_Base (NOT v1) — the VI fine-tune is on the original v0 architecture.
+            _f5tts_instance = F5TTS(
+                model="F5TTS_Base",
+                ckpt_file=str(ckpt_path),
+                vocab_file=str(vocab_path),
+                device=device,
+            )
+        except Exception as exc:  # CUDA OOM, no GPU, etc.
+            if device == "cuda":
+                logger.warning(
+                    "F5-TTS CUDA load failed ({}) — falling back to CPU", exc
+                )
+                _f5tts_instance = F5TTS(
+                    model="F5TTS_Base",
+                    ckpt_file=str(ckpt_path),
+                    vocab_file=str(vocab_path),
+                    device="cpu",
+                )
+            else:
+                raise
+        logger.info("F5-TTS model loaded")
+    return _f5tts_instance
+
+
+async def _f5tts_generate(text: str, output_path: Path) -> None:
+    """Synthesise text via local F5-TTS CPU model and save as MP3.
+
+    Acquires F5TTS consumer on the vram_manager so Ollama and ComfyUI
+    are evicted from VRAM before the model loads.  This frees VRAM for
+    the next image-gen / LLM phase when TTS is done.
+    """
+    from pipeline.vram_manager import VRAMConsumer, vram_manager
+
+    # Evict Ollama + ComfyUI from VRAM before loading the 5 GB F5-TTS model.
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, vram_manager.acquire, VRAMConsumer.F5TTS)
+
+    ref_path = _ensure_ref_audio()
+    ref_text = settings.f5tts_ref_text or _F5TTS_DEFAULT_REF_TEXT
+
+    # The VI fine-tune was trained on lowercase text — must normalize input.
+    gen_text_norm = text.lower()
+    ref_text_norm = ref_text.lower()
+
+    tmp_wav = Path(tempfile.mktemp(suffix=".wav"))
+    try:
+        def _synthesize() -> None:
+            tts = _get_f5tts()
+            tts.infer(
+                ref_file=str(ref_path),
+                ref_text=ref_text_norm,
+                gen_text=gen_text_norm,
+                speed=settings.f5tts_speed,
+                file_wave=str(tmp_wav),
+                remove_silence=True,
+            )
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _synthesize)
+
+        # Convert WAV → MP3
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", str(tmp_wav),
+            "-acodec", "libmp3lame", "-b:a", "192k",
+            str(output_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace") if stderr else "(no stderr)"
+            raise RuntimeError(f"FFmpeg WAV→MP3 failed: {err}")
+    finally:
+        tmp_wav.unlink(missing_ok=True)
 
 
 def _sanitize_tts_text(text: str) -> str:
@@ -173,6 +430,42 @@ async def _generate_shot(
         await _generate_silence(output_path, duration_sec)
         return shot_index, output_path, True
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # --- F5-TTS Vietnamese (local GPU) ---
+    if settings.tts_provider == "f5tts":
+        logger.debug(
+            "TTS request (f5tts) | shot={} chars={} text={!r}",
+            shot_index, len(text), text[:80],
+        )
+        try:
+            await _f5tts_generate(text, output_path)
+            logger.debug("TTS ok (f5tts) | shot={} path={}", shot_index, output_path)
+            return shot_index, output_path, False
+        except Exception as exc:
+            logger.error(
+                "F5-TTS failed | shot={} error={} — falling back to edge-tts", shot_index, exc
+            )
+            # fall through to edge-tts below
+
+    # --- Piper (local) provider ---
+    if settings.tts_provider == "piper":
+        logger.debug(
+            "TTS request (piper) | shot={} model={} chars={} text={!r}",
+            shot_index, settings.piper_model, len(text), text[:80],
+        )
+        try:
+            await _piper_tts(text, output_path)
+            logger.debug("TTS ok (piper) | shot={} path={}", shot_index, output_path)
+            return shot_index, output_path, False
+        except Exception as exc:
+            logger.error(
+                "Piper TTS failed | shot={} error={} — writing silence", shot_index, exc
+            )
+            await _generate_silence(output_path, duration_sec)
+            return shot_index, output_path, True
+
+    # --- edge-tts (cloud) provider ---
     # Log if text will be chunked
     if len(text) > _MAX_TTS_CHARS:
         n_chunks = len(_split_text_into_chunks(text))
@@ -182,33 +475,42 @@ async def _generate_shot(
         )
 
     logger.debug(
-        "TTS request | shot={} voice={} chars={} text={!r}",
+        "TTS request (edge) | shot={} voice={} chars={} text={!r}",
         shot_index, _PRIMARY_VOICE, len(text), text[:80],
     )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
+    voices_to_try = [_PRIMARY_VOICE] + _FALLBACK_VOICES
     last_exc: Optional[Exception] = None
-    for attempt in range(3):
+    for attempt, voice in enumerate(voices_to_try):
         if attempt > 0:
             # Longer cooldown — MS edge-tts server is intermittently flaky (issue #473)
             await asyncio.sleep(15.0)
         try:
-            await _tts_chunked(text, _PRIMARY_VOICE, output_path)
+            await _tts_chunked(text, voice, output_path)
             logger.debug(
-                "TTS ok | shot={} voice={} path={}", shot_index, _PRIMARY_VOICE, output_path
+                "TTS ok | shot={} voice={} path={}", shot_index, voice, output_path
             )
             return shot_index, output_path, False
         except Exception as exc:
             logger.warning(
-                "TTS failed | shot={} attempt={} error={}", shot_index, attempt + 1, exc
+                "TTS failed | shot={} voice={} attempt={} error={}", shot_index, voice, attempt + 1, exc
             )
             last_exc = exc
 
-    logger.error(
-        "All TTS voices failed | shot={} — writing silence. last_error={}",
+    # All edge-tts voices failed — fall back to local Piper before giving up
+    logger.warning(
+        "edge-tts all voices failed | shot={} — falling back to Piper local TTS. last_error={}",
         shot_index, last_exc,
     )
+    try:
+        await _piper_tts(text, output_path)
+        logger.info("Piper fallback ok | shot={} path={}", shot_index, output_path)
+        return shot_index, output_path, False
+    except Exception as exc:
+        logger.error(
+            "Piper fallback also failed | shot={} error={} — writing silence", shot_index, exc
+        )
+
     await _generate_silence(output_path, duration_sec)
     return shot_index, output_path, True
 
@@ -230,7 +532,8 @@ async def generate_episode_tts(
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     # Inter-shot delay to avoid edge-tts throttling from back-to-back requests.
-    _INTER_SHOT_DELAY_SEC = 1.5
+    # Skipped when using local providers (piper, f5tts).
+    _INTER_SHOT_DELAY_SEC = 0.0 if settings.tts_provider in ("piper", "f5tts") else 1.5
 
     results: list[Tuple[int, Path, bool]] = []
 

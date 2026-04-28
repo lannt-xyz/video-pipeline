@@ -1,4 +1,3 @@
-import re
 from typing import List
 
 from config.settings import settings
@@ -12,36 +11,29 @@ _MIN_DURATION_FOR_MULTI_FRAME = 4.0
 # Above this, the model drops or merges concepts randomly.
 _MAX_CONCEPTS_PER_FRAME = 5
 
-# Camera flow → (frame_configs) mapping.
-# Each entry: (camera_tag_prefix, motion_direction)
+# Camera flow → 2-frame configs: (opening_camera_tag, motion), (closing_camera_tag, motion)
+# Frame 0 = opening state of the action (where it begins)
+# Frame 1 = closing state of the action (where it ends / result)
 _FLOW_FRAMES = {
     CameraFlow.WIDE_TO_CLOSE: [
-        # Establish environment → medium subject → tighter story beat.
+        # Start wide to establish the scene, end close to show the story beat.
         ("wide establishing shot, ", MotionDirection.ZOOM_IN),
-        ("wide shot, ", MotionDirection.ZOOM_IN),
-        ("medium shot, ", MotionDirection.ZOOM_IN),
         ("medium close-up, ", MotionDirection.ZOOM_IN),
     ],
     CameraFlow.CLOSE_TO_WIDE: [
-        # Reveal pattern: detail first, then pull out to space context.
-        ("medium close-up, ", MotionDirection.ZOOM_OUT),
-        ("medium shot, ", MotionDirection.ZOOM_OUT),
-        ("wide shot, ", MotionDirection.ZOOM_OUT),
+        # Start on the close detail, pull out to reveal full context.
+        ("close-up detail, ", MotionDirection.ZOOM_OUT),
         ("wide shot, ", MotionDirection.ZOOM_OUT),
     ],
     CameraFlow.PAN_ACROSS: [
+        # Start from one side of the action, end at the other.
         ("left side wide shot, ", MotionDirection.PAN_RIGHT),
-        ("left-center wide shot, ", MotionDirection.PAN_RIGHT),
-        ("right-center wide shot, ", MotionDirection.PAN_LEFT),
         ("right side wide shot, ", MotionDirection.PAN_LEFT),
     ],
     CameraFlow.DETAIL_REVEAL: [
-        # Was "extreme close-up detail" — caused background to disappear entirely.
-        # "close-up detail" still focuses on object but retains surrounding context.
+        # Start extreme close-up on the horror object, end medium to show reaction/context.
         ("close-up detail, ", MotionDirection.ZOOM_OUT),
-        ("medium close-up, ", MotionDirection.ZOOM_OUT),
         ("medium shot, ", MotionDirection.ZOOM_OUT),
-        ("medium wide shot, ", MotionDirection.ZOOM_OUT),
     ],
     CameraFlow.STATIC_CLOSE: [
         ("medium close-up, ", MotionDirection.ZOOM_IN),
@@ -88,14 +80,8 @@ def _split_tags(scene_prompt: str) -> tuple[list[str], list[str], list[str]]:
 
     for tag in tags:
         lower = tag.lower()
-        # Weighted tags like (coffin:1.2) are specific concepts
-        if re.search(r"\(.*:\d+\.\d+\)", tag):
-            if any(w in lower for w in _ACTION_WORDS):
-                action.append(tag)
-            else:
-                obj.append(tag)
-        # Location/atmosphere tags are always environment (shared)
-        elif any(w in lower for w in _LOCATION_WORDS):
+        # Location/atmosphere tags are always environment (shared across frames)
+        if any(w in lower for w in _LOCATION_WORDS):
             env.append(tag)
         elif any(w in lower for w in _ACTION_WORDS):
             action.append(tag)
@@ -197,31 +183,43 @@ def decompose_shot(shot: ShotScript) -> List[FrameScript]:
     max_frames = min(settings.frames_per_shot, len(flow_configs))
     frames = _build_frame_prompts(shot.scene_prompt, flow_configs, num_frames=max_frames)
 
-    # Per-frame action override from visual_brief.actions (Phase 2).
-    # If brief has 2+ actions, replace the action tag in frame[i] with actions[i].
+    # Per-frame action override from visual_brief.actions.
+    # Frame 0 gets actions[0] (opening action), frame 1 gets actions[-1] (closing action).
+    # This ensures the 2 frames depict different moments in the scene narrative.
     brief_actions = (
         shot.visual_brief.actions
-        if shot.visual_brief and len(shot.visual_brief.actions) > 1
+        if shot.visual_brief and shot.visual_brief.actions
         else None
     )
     if not brief_actions:
         return frames
 
+    # Map frame index to action index: first frame → first action, last frame → last action
+    num_frames = len(frames)
+    frame_action_map: list[str] = []
+    for i in range(num_frames):
+        if num_frames == 1 or len(brief_actions) == 1:
+            frame_action_map.append(brief_actions[0])
+        elif i == 0:
+            frame_action_map.append(brief_actions[0])
+        else:
+            frame_action_map.append(brief_actions[-1])
+
+    # Skip injection if all frames would get the same action (no meaningful difference)
+    if len(set(frame_action_map)) <= 1 and num_frames > 1:
+        return frames
+
     updated_frames: list[FrameScript] = []
     for i, frame in enumerate(frames):
-        if i >= len(brief_actions):
-            updated_frames.append(frame)
-            continue
-        action_tag = brief_actions[i].strip()
+        action_tag = frame_action_map[i].strip()
         if not action_tag:
             updated_frames.append(frame)
             continue
-        # Extract scene_prompt minus old primary action (actions[0]) and inject new per-frame action.
-        primary_action = brief_actions[0].strip()
         old_tags = [t.strip() for t in frame.scene_prompt.split(",") if t.strip()]
-        # Remove the primary action tag from all frames (each frame gets its own action now)
-        filtered = [t for t in old_tags if t != primary_action]
-        # Find camera_tag position (first tag) and inject action immediately after it
+        # Remove any existing action tags from brief_actions to avoid duplication
+        all_brief_lower = {a.strip().lower() for a in brief_actions}
+        filtered = [t for t in old_tags if t.lower() not in all_brief_lower]
+        # Inject this frame's action immediately after the camera tag (first tag)
         if filtered:
             cam_tag = filtered[0]
             rest = filtered[1:]

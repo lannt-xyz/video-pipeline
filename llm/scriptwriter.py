@@ -80,9 +80,9 @@ CAMERA FLOW GUIDELINES:
 - Standard narrative/dialogue: prefer "wide_to_close"
 - Shot 8 (cliffhanger): prefer "detail_reveal" or "close_to_wide"
 
-SCENE PROMPT RULES — CRITICAL: ComfyUI uses Stable Diffusion, which requires comma-separated tags, NOT sentences.
-scene_prompt must be a SHORT TAG LIST only. Structure:
-  [specific location], [specific action/pose], [foreground element], [background element], [specific lighting], anime style, no text, no watermarks
+SCENE PROMPT RULES — CRITICAL: ComfyUI uses **Flux Dev**, which reads prompts as natural descriptive language, NOT Stable Diffusion attention-weighted tags.
+scene_prompt must be a SHORT DESCRIPTIVE PHRASE LIST. Structure:
+  [specific location with visual detail], [specific action/pose], [foreground element], [background element], [specific lighting]
 
 SCENE PROMPT QUALITY — Each scene_prompt MUST contain ALL of the following:
 1. At least 1 SPECIFIC LOCATION tag (NOT generic): "dimly lit coffin shop with wooden shelves", NOT just "coffin shop interior"
@@ -94,17 +94,19 @@ SCENE PROMPT QUALITY — Each scene_prompt MUST contain ALL of the following:
 
 SCENE PROMPT EXAMPLES:
 WRONG: "coffin shop interior, intense fight scene, wooden shelves, dim lantern light, dynamic action pose, anime style, dramatic lighting, detailed background, no text, no watermarks"
-→ Problems: "intense fight scene" is vague (WHO doing WHAT?), "dynamic action pose" is generic, "dramatic lighting" has no specifics
+→ Problems: "intense fight scene" is vague (WHO doing WHAT?), "dynamic action pose" is generic, "dramatic lighting" has no specifics, weight syntax like (tag:1.15) is NOT valid for Flux
 
-RIGHT: "dimly lit coffin shop with hanging red paper, figure lunging forward with wooden sword, shattered pottery on floor, rows of dark coffins receding into shadow, flickering oil lamp casting long orange shadows, anime style, no text, no watermarks"
+RIGHT: "dimly lit coffin shop with hanging red paper lanterns, figure lunging forward with wooden sword, shattered pottery on floor, rows of dark coffins receding into shadow, flickering oil lamp casting long orange shadows"
 
 WRONG: "mountain monastery courtyard, daoist training, morning mist, stone staircase, bamboo grove, anime style, dramatic lighting, detailed background, no text, no watermarks"
 → Problems: "daoist training" is too vague, no foreground object, "dramatic lighting" not specific
 
-RIGHT: "stone courtyard at mountain temple summit, figure in meditation stance with hands raised, crumbling stone incense burner in foreground, bamboo forest and mist-covered peaks in background, pale golden dawn light filtering through clouds, anime style, no text, no watermarks"
+RIGHT: "stone courtyard at mountain temple summit, figure in meditation stance with hands raised, crumbling stone incense burner in foreground, bamboo forest and mist-covered peaks in background, pale golden dawn light filtering through clouds"
 
-WRONG: "outdoor gravesite, ancient tomb excavation, night scene, eerie moonlight, dark soil, stone ruins, anime style, dramatic lighting, detailed background, no text, no watermarks"
-RIGHT: "muddy excavation pit with exposed stone sarcophagus, figure kneeling and prying open stone lid, scattered ritual candles on wet earth, ancient crumbling gateway half-buried behind, cold blue moonlight with drifting fog wisps, anime style, no text, no watermarks"
+WRONG: "outdoor gravesite, ancient tomb excavation, night scene, eerie moonlight, dark soil, stone ruins, (stone lid:1.3), (ritual candles:1.2)"
+RIGHT: "muddy excavation pit with exposed stone sarcophagus, figure kneeling and prying open stone lid with iron crowbar, scattered ritual candles on wet earth, ancient crumbling gateway half-buried behind, cold blue moonlight with drifting fog wisps"
+
+FLUX-SPECIFIC RULE: NEVER use `(tag:weight)` or `(tag:1.2)` syntax — these are Stable Diffusion/SDXL features that Flux does not support. Flux reads prompt text literally; weighted parentheses will be passed as literal characters. Write plain descriptive phrases instead.
 
 HORROR ATMOSPHERE — CRITICAL for this story genre:
 Every scene_prompt MUST include at least 1 HORROR/SUPERNATURAL ATMOSPHERE element from this palette:
@@ -156,6 +158,47 @@ These close-up framings (extreme close-up, macro shot, detail shot) are REQUIRED
 
 CLOTHING SAFETY:
 - FORBIDDEN: bare skin, exposed midriff, cleavage, tight clothing, suggestive poses.
+
+PHYSICAL MOTION VOCABULARY — MANDATORY:
+NEVER describe mental/emotional states in scene_prompt — describe the PHYSICAL BODY STATE instead.
+Flux renders pixels, not feelings. Use precise physical descriptors:
+- shock/surprise → "frozen rigid posture, widened eyes with dilated pupils, jaw slightly open"
+- fear/dread → "hunched shoulders pulled inward, eyes darting sideways, hands raised defensively"
+- struggle/effort → "strained tendons visible on neck, white knuckles gripping object, jaw clenched"
+- grief/sorrow → "head bowed low, shoulders shaking, both hands pressed to face"
+- anger/confrontation → "chest forward, chin raised, finger pointing accusatorially"
+- concentration/ritual → "eyes half-closed, lips moving in silent chant, hands positioned precisely"
+- dying/weakened → "body slumped sideways, eyelids half-closed, lips faintly parted"
+FORBIDDEN action words: "reacting", "feeling", "shocked", "afraid", "emotional", "disturbed", "stunned" — describe the body, not the mind.
+
+CINEMATIC QUALITY LAYER — each scene_prompt MUST include:
+- LENS: choose one based on shot type:
+  - Hook/horror close-up → "35mm anamorphic lens, anamorphic lens flares"
+  - Establishing/wide graveyard → "14mm wide angle lens" (creates imposing vastness)
+  - Ritual detail/corpse macro → "85mm macro lens, shallow depth of field, bokeh background"
+  - Standard narrative → "50mm lens"
+- LIGHTING FORMULA: combine temperature + effect, NOT generic adjectives:
+  - Candle/indoor scenes → "2700K amber candlelight" + one of: "chiaroscuro high-contrast shadows", "rim light separating figure from dark background", "Tyndall effect light shaft through incense smoke"
+  - Graveyard/night → "9000K cold blue moonlight" + one of: "volumetric god rays through mist", "rim light on hooded figure edges"
+  - Ghost/supernatural → "desaturated cyan light" + "subsurface scattering on translucent skin"
+  - Corpse close-up → "subsurface scattering on pale parchment skin" (essential for dead flesh realism)
+- FILM STOCK: choose one based on scene mood:
+  - Night/graveyard/horror → "bleach bypass color grade"
+  - Indoor candle/amber → "Kodak Vision3 5219 warm film grain"
+  - Ghost/supernatural → "desaturated cold cyan color grade"
+
+TEXTURE VOCABULARY — use these specific surface descriptors for key props:
+- Coffin → "weathered red lacquer with chipped edges and dark wood grain showing through"
+- Ritual nails/crowbar/iron tools → "corroded iron with rust bloom and pitted surface"
+- Corpse skin → "parchment-dry skin, blue-grey veins visible through translucent dermis"
+- Funeral shroud → "coarse undyed hemp fabric with loose thread ends"
+- Talisman paper → "yellowed aged rice paper with brushed ink strokes"
+- Stone grave marker → "moss-covered weathered granite with hairline cracks"
+Do NOT use generic "old" or "ancient" — pick from the texture vocabulary above.
+
+COMPOSITION RULE: when shot is not a static close-up hook, specify a compositional anchor:
+- "rule of thirds, subject on left third" or "leading lines toward coffin" or "low angle Dutch tilt"
+- Do NOT use "centered portrait" or "symmetrical composition" for horror shots.
 - Do NOT add clothing/style/safety tags (e.g., sfw, fully clothed, anime style, no watermarks) — they are injected automatically downstream.
 
 REQUIRED in scene_prompt — USE ALL TAG POSITIONS FOR ACTUAL CONTENT:
@@ -170,6 +213,24 @@ HOOK SHOT_SUBJECT PRIORITY:
 - Shot 1 and Shot 2 (hook) SHOULD prefer a shock-forward shot_subject (corpse_face, wound, bloody_object, supernatural_entity) whenever narration allows it. A hook of "person_action" is permitted only when the first scene has NO corpse/wound/blood/spirit element.
 - This is the SINGLE biggest retention lever — never open with "figure standing next to coffin"; open with the thing INSIDE the coffin.
 
+TIME-OF-DAY CONSISTENCY — CRITICAL:
+- Establish the time-of-day in shot 1. If shot 1 uses moonlight/night/storm, ALL subsequent shots MUST use night lighting. Never introduce sunlight or daytime in later shots unless the story explicitly jumps to a new day.
+  WRONG: shots 1-4 are moonlit graveyard, shot 5 narration says "dưới ánh mặt trời" (sunlight) — CONTRADICTION, Flux will break the night atmosphere.
+  RIGHT: if the story says "ánh sáng lạnh lẽo", render it as cold moonlight or lantern glow, NOT sunlight.
+- If the source narration contains a time-of-day contradiction (e.g., says "ánh mặt trời" but story is at night), silently correct it in narration_text to match the established time-of-day.
+
+CHARACTER DESCRIPTOR ACCURACY:
+- When a character is physically visible and has a known role/age, use a role-accurate descriptor in scene_prompt:
+  WRONG: "young man" when the character is middle-aged → mismatches any IPAdapter reference
+  RIGHT: "middle-aged Chinese man", "elderly daoist priest", "hooded daoist figure"
+- The `characters` list MUST include a character if their face, body, or silhouette is visible — even for action shots. Only use [] if NO human is visible (pure environment/object shots).
+  WRONG: shot 7 shows Diệp Đại Công standing at coffin → characters=[]
+  RIGHT: shot 7 shows Diệp Đại Công standing at coffin → characters=["Diệp Đại Công"]
+
+CORPSE / GHOST PROMPT QUALITY:
+- For corpse_face shots showing teeth or fangs: MUST include texture detail: "pale grey decomposed skin", "sharp serrated teeth" or "elongated fangs", "cold light catching white enamel" — vague "sharp teeth" alone is insufficient.
+- For supernatural_entity shots (ghost/spirit): MUST include "translucent silhouette", "ethereal wisps of light", "semi-transparent floating form" — Flux needs transparency cues to render a ghost, not just "faint ghostly silhouette in shadow".
+
 OTHER RULES:
 - duration_sec: 2 or 3 for shots 1–2; 8 for standard shots 3-8, 10 for climactic action shots.
 - is_key_shot: Mark EXACTLY 2-3 shots as true — the most action-packed.
@@ -177,10 +238,14 @@ OTHER RULES:
 - When shot_subject is corpse_face / wound / bloody_object / ritual_object / supernatural_entity / environment → characters MUST be [] (the subject is the thing, not the person).
 
 SCENE_ID RULES — CRITICAL for visual consistency:
-- scene_id is a short snake_case English label for the physical location (e.g. "coffin_shop", "temple_gate", "dark_forest", "excavation_pit").
+- scene_id is a short snake_case English label for the PHYSICAL VISUAL SETTING described in scene_prompt (e.g. "outdoor_graveyard", "coffin_shop_interior", "temple_gate", "dark_forest", "excavation_pit").
+- Derive scene_id from WHAT IS VISIBLE IN THE FRAME — not from chapter labels or story arc names.
+  WRONG: scene_prompt describes a graveyard → scene_id="coffin_shop_int" (you thought of the story arc, not the frame)
+  RIGHT: scene_prompt describes a graveyard → scene_id="outdoor_graveyard"
+  WRONG: scene_prompt describes a street → scene_id="ruined_temple_int"
+  RIGHT: scene_prompt describes a street → scene_id="village_street_night"
 - Assign the SAME scene_id to ALL shots that take place in the SAME physical location within this episode.
 - When the story moves to a new location, assign a NEW scene_id.
-- scene_id MUST be consistent with narration: if shots 3, 4, 5 all happen inside the coffin shop, all three get scene_id="coffin_shop".
 - Shots with the same scene_id will share base environment tags at image-generation time — so accuracy matters.
 
 Return JSON:
@@ -353,16 +418,16 @@ _ID_LIKE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
 # --------------------------------------------------------------------------- #
 #  Narration-to-scene-prompt alignment (LLM rewrite pass)                     #
 # --------------------------------------------------------------------------- #
-_NARRATION_ALIGN_SYSTEM = """You are a ComfyUI Stable Diffusion prompt engineer for a HORROR/SUPERNATURAL story.
+_NARRATION_ALIGN_SYSTEM = """You are a ComfyUI Flux Dev prompt engineer for a HORROR/SUPERNATURAL story.
 You receive a list of video shot objects. Each shot has:
   - shot_index (int)
   - narration_text (Vietnamese sentence — what the narrator says)
-  - scene_prompt (existing English tag list for ComfyUI)
+  - scene_prompt (existing English phrase list for ComfyUI)
 
 YOUR TASK: Rewrite each "scene_prompt" so it VISUALLY DEPICTS the exact action/character/object/location described in "narration_text", while MAXIMIZING horror/supernatural atmosphere.
 
 EXTRACTION RULES — read narration and extract these 5 elements:
-1. WHO: which character role is physically visible (use generic role tags: daoist figure, elder figure, young warrior, female figure, hooded figure — NEVER character names)
+1. WHO: which character role is physically visible in THIS shot (use generic role tags matching this shot's character, NOT the protagonist's role by default: daoist figure, elder figure, middle-aged man, young man, female figure, hooded figure — NEVER character names). Match the role to WHO is described in narration_text — if narration describes a villager digging, use "villager" not "daoist figure".
 2. ACTION: the specific physical action/pose being performed (must be concrete: "figure prying open stone lid", "figure slamming fist on table", "figure running through fog" — NOT "action pose", "performing ritual", "fighting")
 3. OBJECT/PROP: key objects mentioned in narration (coffin, dagger, talisman, candles, corpse, compass)
 4. LOCATION: specific place described in narration (abandoned temple courtyard, dark excavation pit, candlelit coffin shop interior)
@@ -374,26 +439,33 @@ EXTRACTION RULES — read narration and extract these 5 elements:
 
 REWRITE RULES:
 - Structure: [LOCATION with visual detail], [ACTION/POSE — must match narration action], [foreground object from narration], [background depth 2 elements], [HORROR ATMOSPHERE lighting/mood]
+- FLUX SYNTAX: Write plain descriptive English phrases. NEVER use `(tag:weight)` or `(tag:1.2)` syntax — Flux reads prompts as natural language; weighted parentheses are passed literally and will corrupt the prompt.
 - Do NOT add style/safety metadata tags (sfw, fully clothed, anime style, no text, no watermarks) — they are injected automatically downstream. Use ALL tag positions for visual content.
 - ACTION tag MUST reflect what narration_text says is happening — not a standing portrait
 - HORROR ATMOSPHERE is MANDATORY: every prompt must have at least 1 eerie/dark/supernatural lighting or mood tag — NEVER use plain "bright daylight" or "warm sunlight" unless the narration explicitly describes a safe daytime scene
 - If narration says "prying open coffin lid" → scene_prompt must contain prying/opening action tags
 - If narration says "shouting accusation at someone" → scene_prompt must contain accusatory gesture tags
 - If narration describes discovery/reveal → scene_prompt must show discovery moment with eerie reveal lighting
-- Keep comma-separated tags — NO English sentences, NO Vietnamese words
 - FORBIDDEN tags: "action pose", "dynamic pose", "performing ritual", "figure standing", "fight scene", "dramatic lighting", "detailed background"
 - FORBIDDEN content: bare skin, exposed midriff, cleavage, tight clothing, suggestive poses
+- PHYSICAL MOTION RULE: NEVER use emotion or mental-state words in ACTION descriptions. Translate to observable body states:
+  "reacting in shock" → "frozen rigid posture, jaw open, widened eyes with dilated pupils"
+  "in fear" → "hunched shoulders, hands raised defensively, weight shifted back on heels"
+  "struggling" → "strained tendons on neck, white knuckles clutching iron bar, jaw clenched tight"
+  "grieving" → "head bowed low, shoulders shaking, hands pressed to face"
+  "surprised" → "body recoiling backward, chin tucked, hands instinctively raised"
+  FORBIDDEN in action tags: "shocked", "afraid", "emotional", "reacting", "feeling", "disturbed"
 
 Return a JSON ARRAY (same length as input, same order):
-[{"shot_index": 0, "scene_prompt": "rewritten tags..."}, ...]
+[{"shot_index": 0, "scene_prompt": "rewritten phrases..."}, ...]
 CRITICAL: Return ONLY the JSON array, no markdown, no explanation."""
 # Object tags — appended at the END of scene_prompt (noun/prop hints).
 _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(dù|ô)\b", re.IGNORECASE), "red umbrella"),
     (re.compile(r"\b(nhang|hương)\b", re.IGNORECASE), "burning incense sticks"),
-    (re.compile(r"quan tài|nắp quan", re.IGNORECASE), "chinese style red lacquered wooden coffin"),
+    (re.compile(r"quan tài|nắp quan", re.IGNORECASE), "weathered red lacquer coffin with chipped edges and dark wood grain"),
     (re.compile(r"dao găm|\bdao\b", re.IGNORECASE), "dagger in hand"),
-    (re.compile(r"\bđinh\b", re.IGNORECASE), "iron nails on wooden coffin lid"),
+    (re.compile(r"\bđinh\b", re.IGNORECASE), "corroded iron nails with rust bloom on coffin lid"),
     (re.compile(r"chậu đồng", re.IGNORECASE), "bronze ritual basin"),
     (re.compile(r"bùa|\bphù\b|chu sa", re.IGNORECASE), "yellow talisman paper"),
     (re.compile(r"la bàn", re.IGNORECASE), "feng shui compass"),
@@ -411,7 +483,7 @@ _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"thi thể|xác chết|\bxác\b|thây|tử thi|nữ tử thi", re.IGNORECASE), "pale lifeless corpse with rigid limbs"),
     (re.compile(r"mộ|ngôi mộ|mồ", re.IGNORECASE), "chinese earthen grave mound with carved stone stele"),
     (re.compile(r"nến|đèn cầy", re.IGNORECASE), "dripping wax candle with flickering flame"),
-    (re.compile(r"trắng bệch|trắng nhợt|xanh xao|tái mét", re.IGNORECASE), "deathly pale white skin with blue-grey veins"),
+    (re.compile(r"trắng bệch|trắng nhợt|xanh xao|tái mét", re.IGNORECASE), "parchment-dry pale skin with blue-grey veins visible through translucent dermis"),
     (re.compile(r"trợn trừng|mắt mở to|mắt trợn", re.IGNORECASE), "wide staring dead eyes with dilated pupils"),
     (re.compile(r"khí âm|âm khí|khí lạnh|hàn khí", re.IGNORECASE), "cold dark mist emanating from body"),
     (re.compile(r"đứa trẻ|đứa bé|hài nhi|trẻ con", re.IGNORECASE), "small child body wrapped in cloth"),
@@ -463,6 +535,18 @@ _SCENE_ALIGN_ACTION_RULES: list[tuple[re.Pattern[str], str]] = [
      "figure lunging out of coffin with arms outstretched"),
     (re.compile(r"cười quỷ|cười dị|cười ác|cười ma|nhe răng", re.IGNORECASE),
      "figure with wide eerie grin showing teeth in unsettling expression"),
+    # Physical motion corrections — catch English emotion words the LLM might still use
+    # and replace with observable body-state descriptions
+    (re.compile(r"\breacting in shock\b|\bin shock\b|\bshocked expression\b", re.IGNORECASE),
+     "frozen rigid posture, jaw open, widened eyes with dilated pupils"),
+    (re.compile(r"\bin fear\b|\bfear expression\b|\bterrified expression\b", re.IGNORECASE),
+     "hunched shoulders pulled inward, eyes darting sideways, hands raised defensively"),
+    (re.compile(r"\bstruggling\b|\bstraining to\b", re.IGNORECASE),
+     "strained neck tendons, white knuckles clutching object, jaw clenched tight"),
+    (re.compile(r"\bin grief\b|\bgrieving\b|\bsorrow expression\b", re.IGNORECASE),
+     "head bowed low, shoulders shaking, hands pressed to face"),
+    (re.compile(r"\bin anger\b|\bangry expression\b|\brage expression\b", re.IGNORECASE),
+     "chest thrust forward, chin raised, finger pointing accusatorially"),
 ]
 
 # Generic pose tags that get REPLACED when a specific action rule fires.
@@ -563,13 +647,26 @@ FIELDS TO EXTRACT:
   - Houses → "traditional chinese village house with wooden beams", NOT western cottage
   - Coffins → "red lacquered chinese wooden coffin", NOT plain box or western casket
   - Only use western elements if the narration EXPLICITLY mentions them.
-- key_objects: List of specific props visible in the scene (max 4). Concrete nouns only.
-  Example: ["glowing talisman paper", "ritual candles", "iron chains on wall"]
+- key_objects: List of specific props visible in the scene (max 4). Concrete nouns with a TEXTURE/MATERIAL qualifier.
+  Flux renders surfaces convincingly only when material is explicit. Each prop MUST have a texture or condition word.
+  GOOD: ["weathered red lacquer coffin", "corroded iron crowbar", "yellow paper talisman with visible fibers", "coarse hemp burial cloth"]
+  BAD (no texture):  ["red coffin", "iron crowbar", "talisman", "white cloth"]
+  Texture vocabulary to draw from: weathered, corroded, oxidized, charred, parchment-dry, viscous, blood-soaked, lacquered, rotted, splintered, moss-covered, dust-caked, frost-rimed, soot-stained.
 - mood_lighting: MUST use format "light source + color palette + effect".
   GOOD: "dim amber candle light, teal shadow palette, volumetric fog drifting along floor"
-  GOOD: "cold blue moonlight, deep violet shadows, mist creeping along stone floor"
+  GOOD: "cold blue moonlight rim-lighting silhouette, deep violet shadows, mist creeping along stone floor"
+  GOOD: "single candle chiaroscuro, amber flicker on face, pitch-black surrounding void"
   BAD: "spooky lighting", "dark atmosphere", "dramatic light"
   This MUST be horror-appropriate. No warm sunlight unless narration explicitly describes daytime safety.
+  CINEMATIC LIGHTING TERMS to use when applicable (Flux responds strongly to these):
+    - "chiaroscuro" → high-contrast painterly light/dark, ideal for single-source candle/lantern shots
+    - "rim lighting" / "rim-lit silhouette" → separates subject from dark background; pair with moonlight or doorway backlight
+    - "subsurface scattering" → REQUIRED whenever shot_subject == "corpse_face" or any close-up of skin (makes pale dead skin read as flesh, not plastic)
+    - "volumetric fog" / "volumetric god rays" → for any shot with smoke, mist, dust, or light beams through cracks
+  MANDATORY LIGHT-SOURCE LOGIC:
+    - If setting/key_objects mention a candle, lantern, oil lamp, or torch → mood_lighting MUST contain "amber flicker" or "amber candlelight".
+    - If setting/key_objects/narration mention the moon or moonlight → mood_lighting MUST contain "cold blue moonlight" AND "rim" (e.g. "cold blue moonlight rim-lighting").
+    - If shot_subject == "corpse_face" → mood_lighting MUST contain "subsurface scattering".
 - composition: Camera framing tag if obvious from narration. Otherwise leave empty string "".
   Examples: "medium close-up", "wide establishing shot", "medium shot", "extreme close-up", "macro shot", "low angle shot"
 - shot_subject: What the camera focuses on. One of: "person_action" | "corpse_face" | "wound" | "bloody_object" | "supernatural_entity" | "ritual_object" | "environment".
@@ -739,7 +836,7 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
             continue
         if obj.lower() in setting_lower:
             continue  # already represented in setting
-        key_object_tags.append(f"({obj}:1.15)")
+        key_object_tags.append(obj)
 
     # Secondary subject — can be dropped when budget exhausted.
     # Suppressed entirely for non-person shots.
@@ -1801,13 +1898,13 @@ def _align_scene_prompt_with_narration(
             # Insert action tags at position 2 (after location tag).
             insert_at = min(2, len(scene_tags))
             for i, tag in enumerate(action_tags[:2]):
-                scene_tags.insert(insert_at + i, f"({tag}:1.3)")
+                scene_tags.insert(insert_at + i, tag)
 
         # Append object tags at end — no metadata suffix to worry about anymore.
         scene_lower_now = {t.lower() for t in scene_tags}
         for tag in object_tags[:6]:
             if tag.lower() not in scene_lower_now:
-                scene_tags.append(f"({tag}:1.2)")
+                scene_tags.append(tag)
                 scene_lower_now.add(tag.lower())
 
         updated.append(shot.model_copy(update={"scene_prompt": ", ".join(scene_tags)}))

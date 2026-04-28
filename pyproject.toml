@@ -21,6 +21,9 @@ dependencies = [
     "edge-tts>=6.1.0",
     # Video/Audio processing
     "ffmpeg-python>=0.2.0",
+    "piper-tts>=1.4.2",
+    "kokoro>=0.9.4",
+    "f5-tts>=1.1.20",
 ]
 
 [dependency-groups]

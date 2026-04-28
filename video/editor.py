@@ -311,22 +311,28 @@ def _build_xfade_command(
         )
         cumulative_offset = offset
 
-    # Audio: trim each clip's audio to the duration until the next xfade starts,
-    # so audio switches in sync with when each video stream becomes dominant.
-    # Without this, concat audio is (n-1)*transition_dur longer than the xfade
-    # video, causing ~0.3s of accumulated A/V drift per shot transition.
-    # Last clip keeps full audio since there is no following xfade.
-    for i, d in enumerate(durations):
-        if i < n - 1:
-            trim_end = min(d, max(0.1, d - transition_dur))
+    # Audio: chain `acrossfade` filters parallel to the video xfade chain so
+    # that audio for shot i+1 fades in EXACTLY when shot i+1's video fades in.
+    #
+    # Previously this used `atrim=0:d-td` + concat, which made audio start
+    # `transition_dur` BEFORE its video became dominant (audio leads video by
+    # ~0.3s per transition) and also clipped the last 0.3s of every shot's
+    # narration. acrossfade matches xfade exactly: total audio length equals
+    # video length, and each shot's audio is heard while its video is on screen.
+    #
+    # The lead-in silence (`tts_lead_in_sec`) baked into each shot audio file
+    # absorbs the acrossfade ramp, so words are not muddled at the boundary.
+    if n == 1:
+        filters.append(f"[0:a]asetpts=PTS-STARTPTS[aout]")
+    else:
+        prev_a = "[0:a]"
+        for i in range(1, n):
+            out_label = "[aout]" if i == n - 1 else f"[ax{i}]"
             filters.append(
-                f"[{i}:a]atrim=0:{trim_end:.4f},asetpts=PTS-STARTPTS[a{i}]"
+                f"{prev_a}[{i}:a]acrossfade=d={transition_dur:.2f}"
+                f":c1=tri:c2=tri{out_label}"
             )
-        else:
-            filters.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
-
-    audio_concat_inputs = "".join(f"[a{i}]" for i in range(n))
-    filters.append(f"{audio_concat_inputs}concat=n={n}:v=0:a=1[aout]")
+            prev_a = out_label
 
     filter_str = ";".join(filters)
 

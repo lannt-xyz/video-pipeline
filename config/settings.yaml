@@ -70,13 +70,25 @@ target_duration_sec: 60
 shot_duration_sec: 6
 
 # Audio
-tts_voice: "vi-VN-HoaiMyNeural"
+tts_provider: "f5tts"          # "edge" = edge-tts (cloud) | "piper" = local Piper | "f5tts" = local F5-TTS GPU
+tts_voice: "vi-VN-HoaiMyNeural"  # used when tts_provider=edge
+piper_model: "vi_VN-vais1000-medium"  # used when tts_provider=piper
+piper_models_dir: "models/piper"   # local cache dir for .onnx model files
+piper_speed: 1.1                   # atempo multiplier: 1.0=normal, 1.1=10% faster (more engaging)
+f5tts_model_dir: "models/f5tts"    # local cache dir for F5-TTS VI checkpoint
+f5tts_ref_audio: "assets/ref_voice.wav"  # 6-30s Vietnamese reference audio for voice cloning
+f5tts_ref_text: "Xin chào, tôi là người kể chuyện. Câu chuyện hôm nay sẽ đưa bạn vào một thế giới đầy bí ẩn và rùng rợn."  # transcript of ref audio
+f5tts_speed: 1.0                   # generation speed multiplier
+f5tts_device: "cuda"               # "cuda" (fast, ~6GB VRAM) | "cpu" (slow, RAM only)
 bgm_volume_db: -15
-tts_lead_in_sec: 0.2
+# Lead-in silence at the start of every shot's mixed audio. Must be >= shot_transition_duration
+# so that spoken narration starts only after the video crossfade has completed (avoids
+# hearing first words while the previous shot is still partially visible).
+tts_lead_in_sec: 0.3
 tts_tail_padding_sec: 0.5
 
 # Multi-frame & motion settings
-frames_per_shot: 4              # images per shot (1 = legacy, 4 = richer motion)
+frames_per_shot: 2              # images per shot — frame 0 = opening action, frame 1 = closing action
 crossfade_duration: 0.5         # seconds, crossfade between frames within a shot
 shot_transition_duration: 0.3   # seconds, transition between shots
 shot_transition_type: "dissolve" # FFmpeg xfade transition type

@@ -109,13 +109,22 @@ class Settings(BaseSettings):
     shot_duration_sec: int = 6
 
     # Audio
-    tts_voice: str = "vi-VN-HoaiMyNeural"
+    tts_provider: str = "edge"              # "edge" | "piper" | "f5tts"
+    tts_voice: str = "vi-VN-HoaiMyNeural"   # used when tts_provider=edge
+    piper_model: str = "vi_VN-vais1000-medium"  # used when tts_provider=piper
+    piper_models_dir: str = "models/piper"   # local cache dir for .onnx files
+    piper_speed: float = 1.1                 # atempo multiplier for post-processing
+    f5tts_model_dir: str = "models/f5tts"    # local cache dir for F5-TTS VI checkpoint
+    f5tts_ref_audio: str = "assets/ref_voice.wav"  # 6-30s Vietnamese reference audio
+    f5tts_ref_text: str = ""                 # transcript of ref audio; empty = auto-transcribe
+    f5tts_speed: float = 1.0
+    f5tts_device: str = "cuda"  # "cuda" or "cpu"                 # generation speed multiplier
     bgm_volume_db: int = -15
     tts_lead_in_sec: float = 0.2
     tts_tail_padding_sec: float = 0.5
 
     # Multi-frame & motion
-    frames_per_shot: int = 4
+    frames_per_shot: int = 2
     crossfade_duration: float = 0.5
     shot_transition_duration: float = 0.3
     shot_transition_type: str = "dissolve"
