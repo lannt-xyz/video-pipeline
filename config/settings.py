@@ -1,11 +1,54 @@
 from pathlib import Path
-from typing import Any, List, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
-from pydantic import field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 _YAML_FILE = str(_PROJECT_ROOT / "config" / "settings.yaml")
+
+
+# ---------------------------------------------------------------------------
+# Nested LLM config models
+# ---------------------------------------------------------------------------
+
+class OllamaLLMConfig(BaseModel):
+    url: str = "http://localhost:11434"
+    default_model: str = "mistral-small:22b"  # fallback for all phases using provider=ollama
+
+
+class GitHubLLMConfig(BaseModel):
+    api_url: str = "https://models.inference.ai.azure.com"
+    model: str = "gpt-4.1"  # shared across all phases; per-phase override not needed
+    rpm: int = 10
+    max_input_tokens: int = 7000
+    max_output_tokens: int = 4096  # explicit output token cap to prevent silent truncation
+
+class GeminiLLMConfig(BaseModel):
+    model: str = "gemini-2.0-flash"
+    rpm: int = 15            # free tier: 15 RPM
+    max_output_tokens: int = 8192
+
+class PhaseConfig(BaseModel):
+    provider: str = "ollama"  # "ollama" | "github"
+    model: str = ""           # empty = use ollama.default_model (ignored when provider=github)
+    json_format: bool = True
+
+
+class PhasesConfig(BaseModel):
+    summary: PhaseConfig = PhaseConfig(provider="ollama", model="", json_format=False)
+    script: PhaseConfig = PhaseConfig(provider="ollama", model="", json_format=True)
+    image_prompt: PhaseConfig = PhaseConfig(provider="ollama", model="", json_format=True)
+
+
+class LLMConfig(BaseModel):
+    timeout: int = 300
+    max_retries: int = 3
+    context_size: int = 32768
+    ollama: OllamaLLMConfig = OllamaLLMConfig()
+    github: GitHubLLMConfig = GitHubLLMConfig()
+    gemini: GeminiLLMConfig = GeminiLLMConfig()
+    phases: PhasesConfig = PhasesConfig()
 
 
 class Settings(BaseSettings):
@@ -42,40 +85,15 @@ class Settings(BaseSettings):
     chapters_per_episode: int = 35
 
     # API endpoints
-    ollama_url: str = "http://localhost:11434"
     comfyui_url: str = "http://localhost:8188"
 
-    # LLM configuration
-    llm_model: str = "qwen2.5:7b-instruct-q8_0"
-    # Phase-specific models (fall back to llm_model when empty)
-    summary_model: str = ""   # used by summarizer & character_extractor
-    script_model: str = ""    # used by scriptwriter (narration_text generation)
-    scene_prompt_model: str = ""  # used by scriptwriter (ComfyUI scene_prompt rewrite pass); falls back to script_model
-    llm_timeout: int = 120
-
-    # GitHub Models API (for script/scene-prompt generation)
-    # Provider: "ollama" | "github" — controls which backend scriptwriter uses
-    script_provider: str = "ollama"
-    # Provider for ComfyUI image-prompt generation (scene_prompt + anchor tag derivation)
-    # "ollama" uses scene_prompt_model; "github" uses github_model (same creds as script_provider)
-    image_prompt_provider: str = "ollama"
-    github_api_url: str = "https://models.inference.ai.azure.com"
-    github_model: str = "gpt-4.1"
-    github_rpm: int = 10  # proactive rate limit (requests/min); gpt-5=1, gpt-4.1=10
-    # Max input tokens per request (system + user). gpt-4.1 free tier = 8000 total.
-    # User content is truncated to (github_max_input_tokens - system_token_budget) before sending.
-    github_max_input_tokens: int = 7500
+    # LLM — unified nested config
+    llm: LLMConfig = LLMConfig()
     # GitHub token: set via env var PIPELINE_GITHUB_TOKEN (never hardcode)
     github_token: str = ""
-    llm_max_retries: int = 3
-    llm_context_size: int = 16384
-    # Set false when script_model does not support Ollama constrained JSON decoding (e.g. gpt-oss)
-    # Only affects the script client — summary/other clients use native format mode
-    script_json_format: bool = True
-    summary_json_format: bool = True  # set false for summary_model that ignores format:json
-    llm_json_format: bool = True      # set false for llm_model that ignores format:json
-    scene_prompt_json_format: bool = True  # set false for scene_prompt_model that ignores format:json
-    ollama_json_format: bool = True  # deprecated alias kept for backward-compat; prefer script_json_format
+    # Gemini API key: set via env var PIPELINE_GEMINI_API_KEY (never hardcode)
+    gemini_api_key: str = ""
+
     comfyui_timeout: int = 300
     comfyui_poll_interval: int = 2
 
@@ -142,20 +160,104 @@ class Settings(BaseSettings):
     def total_episodes(self) -> int:
         return (self.total_chapters + self.chapters_per_episode - 1) // self.chapters_per_episode
 
+    # ------------------------------------------------------------------
+    # Backward-compat shims — client.py and other modules use these
+    # ------------------------------------------------------------------
+
+    @property
+    def llm_model(self) -> str:
+        return self.llm.ollama.default_model
+
+    @property
+    def ollama_url(self) -> str:
+        return self.llm.ollama.url
+
+    @property
+    def llm_timeout(self) -> int:
+        return self.llm.timeout
+
+    @property
+    def llm_max_retries(self) -> int:
+        return self.llm.max_retries
+
+    @property
+    def llm_context_size(self) -> int:
+        return self.llm.context_size
+
+    @property
+    def github_api_url(self) -> str:
+        return self.llm.github.api_url
+
+    @property
+    def github_model(self) -> str:
+        return self.llm.github.model
+
+    @property
+    def github_rpm(self) -> int:
+        return self.llm.github.rpm
+
+    @property
+    def github_max_input_tokens(self) -> int:
+        return self.llm.github.max_input_tokens
+
+    @property
+    def github_max_output_tokens(self) -> int:
+        return self.llm.github.max_output_tokens
+
+    @property
+    def gemini_model(self) -> str:
+        return self.llm.gemini.model
+
+    @property
+    def gemini_rpm(self) -> int:
+        return self.llm.gemini.rpm
+
+    @property
+    def gemini_max_output_tokens(self) -> int:
+        return self.llm.gemini.max_output_tokens
+
+    @property
+    def summary_provider(self) -> str:
+        return self.llm.phases.summary.provider
+
+    @property
+    def script_provider(self) -> str:
+        return self.llm.phases.script.provider
+
+    @property
+    def image_prompt_provider(self) -> str:
+        return self.llm.phases.image_prompt.provider
+
+    @property
+    def script_json_format(self) -> bool:
+        return self.llm.phases.script.json_format
+
+    @property
+    def summary_json_format(self) -> bool:
+        return self.llm.phases.summary.json_format
+
+    @property
+    def scene_prompt_json_format(self) -> bool:
+        return self.llm.phases.image_prompt.json_format
+
+    def _resolve_model(self, phase: "PhaseConfig") -> str:
+        """Return phase model, falling back to ollama.default_model when empty."""
+        return phase.model.strip() or self.llm.ollama.default_model
+
     @property
     def effective_summary_model(self) -> str:
         """Model used for summarize / character extraction phases."""
-        return self.summary_model.strip() or self.llm_model
+        return self._resolve_model(self.llm.phases.summary)
 
     @property
     def effective_script_model(self) -> str:
         """Model used for scriptwriting / narration generation phases."""
-        return self.script_model.strip() or self.llm_model
+        return self._resolve_model(self.llm.phases.script)
 
     @property
     def effective_scene_prompt_model(self) -> str:
         """Model used for ComfyUI scene_prompt generation (narration-alignment rewrite pass)."""
-        return self.scene_prompt_model.strip() or self.effective_script_model
+        return self._resolve_model(self.llm.phases.image_prompt)
 
 
 settings = Settings()

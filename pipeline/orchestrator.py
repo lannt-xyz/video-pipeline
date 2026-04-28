@@ -16,7 +16,7 @@ from pipeline.vram_manager import VRAMConsumer, vram_manager
 if TYPE_CHECKING:
     from image_gen.comfyui_client import ComfyUIClient
 
-PHASES = ["llm", "images", "audio", "video", "validate"]
+PHASES = ["llm", "script_review", "images", "audio", "video", "validate"]
 
 
 def setup_logging(episode_num: int = None) -> None:
@@ -568,29 +568,15 @@ def _build_shot_image_params(
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
-    Workflow routing (frame 0 only — fan-out frames always use img2img_scene):
-      2 char pairs  → txt2img_ipadapter_dual   (ANCHOR_PATH + ANCHOR_PATH_2)
-      1 pair, 3 anchors → txt2img_ipadapter_multiref (ANCHOR_PATH/2/3)
-      1 pair, 1-2 anchors → txt2img_ipadapter (ANCHOR_PATH, or ANCHOR_PATH+2 for multiref)
-      0 pairs       → txt2img_scene
+    Workflow routing:
+      All shots (with or without characters) → flux_txt2img_scene
+      NOTE: IPAdapter branches are temporarily disabled.
+            Character identity is NOT enforced — Flux handles all generation.
 
     SCENE_PROMPT contains ONLY visual content (location, action, objects, mood).
-    Metadata tags (sfw, anime style, etc.) live in the workflow CLIP suffix.
-
-    shot_subject: when not "person_action"/"environment", the shot is a shock
-    close-up (corpse_face / wound / bloody_object / supernatural_entity /
-    ritual_object). In that case we must NOT inject wide-framing tags nor
-    negative-block close-ups.
+    shot_subject: drives framing hints injected into the prompt.
     """
     wants_closeup = shot_subject not in ("person_action", "environment")
-    has_female = any(c is not None and c.gender == "female" for c, _ in char_anchor_pairs)
-    negative_base = (
-        _NEGATIVE_BASE + ", (male:1.5), (masculine:1.3), 1boy"
-        if has_female
-        else _NEGATIVE_BASE
-    )
-
-    _ANTI_SPLIT_SINGLE = ", (2girls:1.5), (2boys:1.5), (multiple girls:1.5), (multiple boys:1.5), (split view:1.5), (grid:1.5), (collage:1.5), (multiple views:1.5)"
 
     # Strip leftover metadata tags that LLM might still include (from cached scripts).
     scene_text = _strip_metadata_tags(prompt_text)
@@ -598,7 +584,7 @@ def _build_shot_image_params(
         prompt_text, char_anchor_pairs, artifact_hints_by_name
     )
 
-    # Gender count tags for character shots
+    # Gender count tags — still useful as prompt hints for Flux even without IPAdapter
     gender_tags = ""
     if len(char_anchor_pairs) >= 2:
         genders = [c.gender if c else "male" for c, _ in char_anchor_pairs]
@@ -613,60 +599,28 @@ def _build_shot_image_params(
 
     scene_prompt_parts = [p for p in [scene_text, artifact_detail_tags, gender_tags] if p]
 
-    # Prepend framing tags for scene-only (no character) shots — EXCEPT when
-    # the shot_subject demands a close-up (corpse/wound/blood/entity/object).
-    # Wide-framing tags would fight against the intended extreme close-up.
+    # Prepend wide-framing tags for pure environment shots (no character, no shock close-up)
     if not char_anchor_pairs and not wants_closeup:
         if _SCENE_FRAMING_TAGS not in (scene_prompt_parts[0] if scene_prompt_parts else ""):
             scene_prompt_parts.insert(0, _SCENE_FRAMING_TAGS)
 
-    neg = negative_base + _ANTI_SPLIT_SINGLE
-    if not char_anchor_pairs and not wants_closeup:
-        # Block close-ups only when the shot is genuinely scene-only (environment
-        # or person_action with no resolved chars). For subject close-ups we
-        # explicitly WANT extreme close-up framing.
-        neg += _SCENE_ANTI_PORTRAIT_NEG
-
     replacements: dict = {
         "SCENE_PROMPT": _compact_prompt_tags(", ".join(scene_prompt_parts), max_tags=24),
-        "NEGATIVE_PROMPT": neg,
         "SEED": seed,
+        "WIDTH": settings.image_width,
+        "HEIGHT": settings.image_height,
     }
 
     if init_image_path is not None:
-        # Fan-out frame (fidx > 0): img2img from frame-0; IPAdapter not needed.
+        # Fan-out frame (fidx > 0): img2img from frame-0.
         workflow = "image_gen/workflows/img2img_scene.json"
         replacements["INIT_IMAGE"] = init_image_path
         replacements["DENOISE"] = denoise
-    elif len(char_anchor_pairs) >= 2:
-        # 2-character scene: dual IPAdapter
-        workflow = "image_gen/workflows/txt2img_ipadapter_dual.json"
-        _, anchors1 = char_anchor_pairs[0]
-        _, anchors2 = char_anchor_pairs[1]
-        replacements["ANCHOR_PATH"] = anchors1[0]
-        replacements["ANCHOR_PATH_2"] = anchors2[0]
-        replacements["WIDTH"] = settings.image_width
-        replacements["HEIGHT"] = settings.image_height
-    elif len(char_anchor_pairs) == 1:
-        _, anchors = char_anchor_pairs[0]
-        if len(anchors) >= 3:
-            workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
-            replacements["ANCHOR_PATH"] = anchors[0]
-            replacements["ANCHOR_PATH_2"] = anchors[1]
-            replacements["ANCHOR_PATH_3"] = anchors[2]
-        elif len(anchors) == 2:
-            workflow = "image_gen/workflows/txt2img_ipadapter_multiref.json"
-            replacements["ANCHOR_PATH"] = anchors[0]
-            replacements["ANCHOR_PATH_2"] = anchors[1]
-        else:
-            workflow = "image_gen/workflows/txt2img_ipadapter.json"
-            replacements["ANCHOR_PATH"] = anchors[0]
-        replacements["WIDTH"] = settings.image_width
-        replacements["HEIGHT"] = settings.image_height
+        # img2img_scene still uses SDXL — needs NEGATIVE_PROMPT
+        replacements["NEGATIVE_PROMPT"] = _NEGATIVE_BASE
     else:
-        workflow = "image_gen/workflows/txt2img_scene.json"
-        replacements["WIDTH"] = settings.image_width
-        replacements["HEIGHT"] = settings.image_height
+        # All txt2img shots → Flux (IPAdapter disabled)
+        workflow = "image_gen/workflows/flux_txt2img_scene.json"
 
     return workflow, replacements
 
@@ -926,6 +880,30 @@ def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     db.set_episode_status(episode_num, "VIDEO_DONE")
 
 
+def run_script_review(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
+    """Phase: quality-review the generated script and auto-fix issues via LLM."""
+    from llm.script_reviewer import review_episode_script
+
+    if dry_run:
+        logger.info("[dry-run] Skipping script_review | episode={}", episode_num)
+        db.set_episode_status(episode_num, "SCRIPT_REVIEWED")
+        return
+
+    db.record_phase_start(episode_num, "script_review")
+    _, report = review_episode_script(episode_num)
+
+    if report.fixed_shots:
+        logger.info(
+            "Script review fixed {} shot(s) | episode={} fixed={}",
+            len(report.fixed_shots), episode_num, report.fixed_shots,
+        )
+    else:
+        logger.info("Script review complete — no rewrites needed | episode={}", episode_num)
+
+    db.record_phase_done(episode_num, "script_review")
+    db.set_episode_status(episode_num, "SCRIPT_REVIEWED")
+
+
 def run_validate(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     if dry_run:
         logger.info("[dry-run] Skipping validate | episode={}", episode_num)
@@ -952,6 +930,7 @@ def run_validate(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
 _PHASE_RUNNERS = {
     "llm": run_llm,
+    "script_review": run_script_review,
     "images": run_images,
     "audio": run_audio,
     "video": run_video,

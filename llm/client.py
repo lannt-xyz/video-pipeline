@@ -229,20 +229,28 @@ class OllamaClient:
             return None
 
 
-ollama_client = OllamaClient(json_format=settings.llm_json_format)
-# Phase-specific clients — model falls back to llm_model when the phase fields are empty.
-summary_client = OllamaClient(model=settings.effective_summary_model, json_format=settings.summary_json_format)
-# scene_prompt_client: alias kept for backward-compat; built by get_image_prompt_client() below.
-# Controlled by image_prompt_provider ("ollama" | "github").
-# Defined after GitHubLLMClient class — see bottom of file.
-scene_prompt_client: "OllamaClient | GitHubLLMClient"
+
+
+
+_GITHUB_429_MAX_WAIT = 120  # seconds — if retry-after exceeds this, fail fast instead of sleeping
 
 
 def _github_retry_wait(retry_state) -> float:  # type: ignore[type-arg]
-    """Custom tenacity wait: respect Retry-After on 429, else exponential backoff."""
+    """Custom tenacity wait: respect Retry-After on 429, else exponential backoff.
+
+    If retry-after > _GITHUB_429_MAX_WAIT the quota is exhausted for this session
+    (GitHub returns values like 76000s when daily token limit is hit).
+    Raise immediately so the pipeline fails fast instead of sleeping for hours.
+    """
     exc = retry_state.outcome.exception()
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
         retry_after = int(exc.response.headers.get("retry-after", 65))
+        if retry_after > _GITHUB_429_MAX_WAIT:
+            raise RuntimeError(
+                f"GitHub Models quota exhausted — retry-after={retry_after}s "
+                f"(>{_GITHUB_429_MAX_WAIT}s threshold). "
+                "Switch provider or wait until quota resets."
+            )
         logger.warning(
             "GitHub Models rate limit (429) — waiting {}s before retry", retry_after
         )
@@ -310,6 +318,7 @@ class GitHubLLMClient:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
+            "max_tokens": settings.github_max_output_tokens,
         }
         if response_format == "json":
             payload["response_format"] = {"type": "json_object"}
@@ -347,7 +356,22 @@ class GitHubLLMClient:
             )
             resp.raise_for_status()  # raises immediately, no retry
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        choice = data["choices"][0]
+        finish_reason = choice.get("finish_reason", "")
+        content = choice["message"]["content"]
+        if finish_reason == "length":
+            logger.warning(
+                "GitHub Models API output truncated (finish_reason=length) | "
+                "model={} output_len={} max_tokens={}",
+                self.model, len(content), settings.github_max_output_tokens,
+            )
+            raise httpx.HTTPStatusError(
+                "Output truncated (finish_reason=length) — increase github.max_output_tokens",
+                request=resp.request,
+                response=resp,
+            )
+        return content
 
     def generate_json(
         self,
@@ -355,7 +379,7 @@ class GitHubLLMClient:
         system: Optional[str] = None,
         temperature: float = 0.3,
     ) -> Any:
-        """Call GitHub Models API and return parsed JSON."""
+        """Call GitHub Models API and return parsed JSON. Tries to repair malformed JSON if needed."""
         raw = self.generate(
             prompt=prompt,
             system=system,
@@ -368,10 +392,186 @@ class GitHubLLMClient:
             logger.warning("GitHub Models API returned empty response — will retry")
             raise json.JSONDecodeError("Empty response from GitHub Models API", "", 0)
 
-        return json.loads(stripped)
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError as decode_err:
+            logger.warning("GitHub Models API returned non-JSON (first 200 chars): {!r}", stripped[:200])
+            # Try to repair using OllamaClient logic for consistency
+            repaired = OllamaClient._repair_json_text(self, stripped)
+            if repaired:
+                try:
+                    return json.loads(repaired)
+                except json.JSONDecodeError:
+                    logger.warning("JSON repair attempt failed (first 200 chars): {!r}", repaired[:200])
+            raise decode_err
 
 
-def get_script_client() -> "OllamaClient | GitHubLLMClient":
+def _gemini_retry_wait(retry_state) -> float:  # type: ignore[type-arg]
+    """Custom tenacity wait for Gemini: parse retryDelay from body → Retry-After header → backoff."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        # 1. Gemini often embeds retryDelay in the JSON body error details
+        wait: float = 0.0
+        try:
+            body = exc.response.json()
+            for detail in body.get("error", {}).get("details", []):
+                delay_str: str = detail.get("retryDelay", "")
+                if delay_str.endswith("s"):
+                    wait = float(delay_str[:-1])
+                    break
+        except Exception:
+            pass
+        # 2. Fall back to Retry-After header
+        if not wait:
+            wait = float(exc.response.headers.get("retry-after", 0))
+        # 3. Default: one full minute window + small buffer
+        if not wait:
+            wait = 62.0
+        logger.warning("Gemini rate limit (429) — waiting {:.0f}s before retry", wait)
+        return wait
+    attempt = retry_state.attempt_number
+    return min(2.0 ** attempt * 2, 30.0)
+
+
+class GeminiLLMClient:
+    """Thin httpx wrapper for Google Gemini REST API (v1beta generateContent)."""
+
+    _BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(self) -> None:
+        self.model = settings.gemini_model
+        self.timeout = settings.llm_timeout
+        self._api_key = settings.gemini_api_key
+        self._min_interval: float = 60.0 / max(settings.gemini_rpm, 1)
+        self._last_call_at: float = 0.0
+        self._rate_lock = threading.Lock()
+        if not self._api_key:
+            logger.warning("PIPELINE_GEMINI_API_KEY is not set — Gemini API calls will fail.")
+
+    def health_check(self) -> bool:
+        """Validates API key is present; raises RuntimeError if missing."""
+        if not self._api_key:
+            raise RuntimeError("Gemini API key not configured (PIPELINE_GEMINI_API_KEY).")
+        return True
+
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=_gemini_retry_wait,
+        retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError)),
+        reraise=True,
+    )
+    def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        response_format: Optional[str] = None,
+    ) -> str:
+        """Call Gemini generateContent and return text response."""
+        if not self._api_key:
+            raise RuntimeError("Gemini API key not set. Export PIPELINE_GEMINI_API_KEY env var.")
+
+        contents: list[dict] = [{"role": "user", "parts": [{"text": prompt}]}]
+
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": settings.gemini_max_output_tokens,
+            },
+        }
+        if system:
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
+        if response_format == "json":
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+
+        # Proactive rate throttle
+        with self._rate_lock:
+            elapsed = time.monotonic() - self._last_call_at
+            wait = self._min_interval - elapsed
+            if wait > 0:
+                logger.debug("Gemini rate throttle: sleeping {:.1f}s", wait)
+                time.sleep(wait)
+            self._last_call_at = time.monotonic()
+
+        logger.debug("Calling Gemini API | model={} prompt_len={}", self.model, len(prompt))
+        resp = httpx.post(
+            f"{self._BASE_URL}/models/{self.model}:generateContent?key={self._api_key}",
+            json=payload,
+            timeout=self.timeout,
+        )
+        # Do not retry on 4xx except 429
+        if resp.status_code not in (429,) and 400 <= resp.status_code < 500:
+            logger.error(
+                "Gemini API client error {} — not retrying: {}", resp.status_code, resp.text[:300]
+            )
+            resp.raise_for_status()
+        resp.raise_for_status()
+
+        data = resp.json()
+        # Handle safety blocks
+        if not data.get("candidates"):
+            finish = (data.get("promptFeedback") or {}).get("blockReason", "unknown")
+            raise RuntimeError(f"Gemini response blocked: {finish}")
+
+        candidate = data["candidates"][0]
+        finish_reason = candidate.get("finishReason", "STOP")
+        if finish_reason == "MAX_TOKENS":
+            content_so_far = "".join(
+                p.get("text", "") for p in candidate.get("content", {}).get("parts", [])
+            )
+            logger.warning(
+                "Gemini output truncated (MAX_TOKENS) | model={} output_len={} max_tokens={}",
+                self.model, len(content_so_far), settings.gemini_max_output_tokens,
+            )
+            raise httpx.HTTPStatusError(
+                "Output truncated (MAX_TOKENS) — increase gemini.max_output_tokens",
+                request=resp.request,
+                response=resp,
+            )
+        return "".join(p.get("text", "") for p in candidate["content"]["parts"])
+
+    def generate_json(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.3,
+    ) -> Any:
+        """Call Gemini API and return parsed JSON."""
+        raw = self.generate(
+            prompt=prompt,
+            system=system,
+            temperature=temperature,
+            response_format="json",
+        )
+        stripped = OllamaClient._strip_markdown_fences(raw)
+        if not stripped:
+            logger.warning("Gemini returned empty response — will retry")
+            raise json.JSONDecodeError("Empty response from Gemini", "", 0)
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError as decode_err:
+            logger.warning("Gemini returned non-JSON (first 200 chars): {!r}", stripped[:200])
+            repaired = OllamaClient._repair_json_text(self, stripped)
+            if repaired:
+                try:
+                    return json.loads(repaired)
+                except json.JSONDecodeError:
+                    logger.warning("JSON repair attempt failed (first 200 chars): {!r}", repaired[:200])
+            raise decode_err
+
+
+def get_summary_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient":
+    """Factory: return the correct LLM client for the summary/character-extraction phase."""
+    if settings.summary_provider == "github":
+        return GitHubLLMClient()
+    return OllamaClient(
+        model=settings.effective_summary_model,
+        json_format=settings.summary_json_format,
+    )
+
+
+def get_script_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient":
     """Factory: return the correct LLM client for the scriptwriting phase."""
     if settings.script_provider == "github":
         return GitHubLLMClient()
@@ -381,25 +581,30 @@ def get_script_client() -> "OllamaClient | GitHubLLMClient":
     )
 
 
-def get_image_prompt_client() -> "OllamaClient | GitHubLLMClient":
+def get_image_prompt_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient":
     """Factory: return the correct LLM client for ComfyUI image-prompt generation.
 
     Controls two tasks together:
     - scene_prompt rewrite pass (scriptwriter)
     - anchor character tag derivation (profile_builder)
 
-    "ollama" uses scene_prompt_model; "github" uses the shared github_model credentials.
+    "ollama" uses scene_prompt_model; "github" uses shared github_model credentials;
+    "gemini" uses the Google Gemini REST API (PIPELINE_GEMINI_API_KEY).
     """
     if settings.image_prompt_provider == "github":
         return GitHubLLMClient()
+    if settings.image_prompt_provider == "gemini":
+        return GeminiLLMClient()
     return OllamaClient(
         model=settings.effective_scene_prompt_model,
         json_format=settings.scene_prompt_json_format,
     )
 
 
-# Module-level instances for backward-compat imports
+# Module-level instances — provider-aware (ollama | github) via factories above.
+summary_client = get_summary_client()
 script_client = get_script_client()
 image_prompt_client = get_image_prompt_client()
-# scene_prompt_client is an alias for image_prompt_client (scriptwriter imports it by this name)
-scene_prompt_client = image_prompt_client
+# Aliases for backward-compat imports
+scene_prompt_client = image_prompt_client   # scriptwriter uses this name
+ollama_client = image_prompt_client         # character_extractor uses this name (image-prompt phase)

@@ -17,6 +17,7 @@ EPISODE_STATES = [
     "CRAWLED",
     "SUMMARIZED",
     "SCRIPTED",
+    "SCRIPT_REVIEWED",
     "IMAGES_DONE",
     "AUDIO_DONE",
     "VIDEO_DONE",
@@ -25,7 +26,8 @@ EPISODE_STATES = [
 
 _PHASE_TO_RESET_STATUS = {
     "llm": "PENDING",
-    "images": "SCRIPTED",
+    "script_review": "SCRIPTED",
+    "images": "SCRIPT_REVIEWED",
     "audio": "IMAGES_DONE",
     "video": "AUDIO_DONE",
     "validate": "VIDEO_DONE",

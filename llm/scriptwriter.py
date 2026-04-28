@@ -53,7 +53,14 @@ NARRATIVE RULES (most critical):
 - Each shot's narration_text tells what SPECIFICALLY happens — name the action, the character, the location.
 - Use the character names provided in the Characters list when they are clearly the character in the scene.
 - Shots must connect: the last sentence of shot N sets up shot N+1.
-- Voice: first-person narrator ("Tôi..."), present-tense tension.
+- LANGUAGE: narration_text MUST be written entirely in Vietnamese — no English words, phrases, or sentences anywhere, including hook shots.
+  WRONG hook (English): "A face from the abyss" — FORBIDDEN even as a stylistic choice
+  RIGHT hook (Vietnamese): "Hắn mở nắp quan tài... và thứ bên trong nhìn tôi." or "Khuôn mặt ấy không phải của người sống."
+- Voice: first-person narrator ("Tôi..."), present-tense tension. The narrator is ALWAYS speaking — never describe what "Thanh Vân Tử" does from the outside.
+  WRONG (third-person): "Thanh Vân Tử phát hiện ra rằng Diệp Thiếu Dương đã bị trúng độc thi. Hắn quyết định điều tra nguyên nhân."
+  RIGHT (first-person): "Tôi nhìn vào vết thương trên cổ Thiếu Dương — đây không phải bệnh thông thường. Đây là độc thi. Kẻ nào đó đã cố tình gieo mầm tử thần vào cơ thể cậu ta."
+  WRONG (third-person): "Thanh Vân Tử yêu cầu Diệp Đại Công dẫn hắn đến mộ."
+  RIGHT (first-person): "Tôi yêu cầu lão dẫn tôi đến ngôi mộ đó — ngôi mộ của người đàn bà chết khi đang mang thai."
 - FORBIDDEN phrases: "mọi chuyện leo thang", "những bí ẩn được hé lộ", "cuộc chiến tiếp tục", "các nhân vật xuất hiện".
 
 CAMERA FLOW — Choose the right camera movement for each shot:
@@ -107,6 +114,14 @@ Every scene_prompt MUST include at least 1 HORROR/SUPERNATURAL ATMOSPHERE elemen
 - TENSION OBJECTS: "scattered yellowed talisman papers", "overturned ritual candles dripping wax", "cracked ancient mirror reflecting distorted image", "half-open coffin lid with darkness inside", "bloody handprint on wall"
 Choose elements appropriate to the specific scene — graveyard scenes get fog/moonlight, indoor scenes get candles/shadows, ritual scenes get glowing symbols/talismans.
 Do NOT use the word "mysterious" — use specific visual descriptors instead.
+
+HOODED / MASKED CHARACTER EXPRESSIONS:
+- If a character wears a hood ("hooded daoist figure", "cloaked figure") and the shot requires an emotional expression (worried, accusatory, shocked, angry), you MUST add "face partially visible under hood" to the scene_prompt so the expression can render.
+- WRONG: "hooded daoist figure, worried expression" (hood blocks the face — expression cannot render)
+- RIGHT: "hooded daoist figure, face partially visible under hood, worried expression visible in the shadow"
+
+WET / RAIN ENVIRONMENT:
+- Rain or wet-ground scenes MUST include depth cues: "reflections on wet stone path", "rain streaks on wooden surfaces", "puddles reflecting candlelight". Without these, Flux renders rain as flat gray blur.
 
 FORBIDDEN in scene_prompt:
 - English sentences or clauses ("He walks into...", "Fifteen years later...")

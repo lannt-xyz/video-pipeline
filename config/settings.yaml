@@ -6,44 +6,50 @@ total_chapters: 3534
 chapters_per_episode: 5
 
 # API endpoints
-ollama_url: "http://localhost:11434"
 comfyui_url: "http://localhost:8188"
 
-# LLM configuration gemma4-32k:latest
-llm_model: "mistral-small:22b"
-# Phase-specific model overrides (empty = use llm_model)
-summary_model: "mistral-small:22b"
-# qwen2.5:14b, mistral-small:22b, gpt-oss:20b
-# NOTE: llama3.1:8b refuses horror/occult content ("supernatural activities involving minors").
-# mistral-small:22b has much looser safety alignment — preferred for horror stories.
-script_model: "mistral-small:22b"
-# Set false when script_model does not support Ollama constrained JSON decoding (e.g. gpt-oss family)
-# Only affects the script client — summary/other clients always use native format mode
-script_json_format: true
-# Model for ComfyUI scene_prompt generation (narration-alignment rewrite pass)
-# Empty = fall back to script_model
-scene_prompt_model: "mistral-small:22b"
-# Set false when scene_prompt_model does not support Ollama constrained JSON decoding
-scene_prompt_json_format: true
-# Set false when summary_model does not support Ollama constrained JSON decoding
-summary_json_format: false
-# Set false when llm_model does not support Ollama constrained JSON decoding
-llm_json_format: false
-llm_timeout: 300
-llm_max_retries: 3
-llm_context_size: 32768
+# LLM configuration — unified per-phase settings
+# provider: "ollama" | "github"
+# json_format: set false for models that ignore Ollama format:json constraint
+# NOTE: mistral-small:22b preferred for horror stories — looser safety alignment than llama3
+# NOTE: llama3.1:8b refuses horror/occult content ("supernatural activities involving minors")
+llm:
+  timeout: 300
+  max_retries: 3
+  context_size: 32768
 
-# GitHub Models API — used when script_provider = "github"
-# Switch script/scene-prompt generation to GPT-5 or gpt-4.1 via GitHub API
-script_provider: "ollama"       # "ollama" | "github"
-# Controls ComfyUI image-prompt generation: scene_prompt (scriptwriter) + anchor tag derivation
-# "ollama" uses scene_prompt_model; "github" uses github_model (shared creds with script_provider)
-image_prompt_provider: "ollama"  # "ollama" | "github"
-github_api_url: "https://models.inference.ai.azure.com"
-github_model: "gpt-4.1"      # gpt-5 has 1 req/min limit even on Pro+; gpt-4.1 has much higher limits
-github_rpm: 10                # proactive throttle: requests per minute (gpt-4.1=10, gpt-5=1)
-github_max_input_tokens: 7000 # gpt-4.1 free tier cap = 8000 tokens total; 7000 leaves room for system prompt + output
-# Token: set PIPELINE_GITHUB_TOKEN env var — never put the real token here
+  # Ollama — default model shared by all phases using provider=ollama
+  # Override per-phase by setting phases.<phase>.model explicitly
+  ollama:
+    url: "http://localhost:11434"
+    default_model: "mistral-nemo:12b"
+
+  # GitHub Models API creds (token: set PIPELINE_GITHUB_TOKEN env var — never hardcode)
+  # model is shared across all phases — no per-phase override needed
+  github:
+    api_url: "https://models.inference.ai.azure.com"
+    model: "Meta-Llama-3.1-405B-Instruct"  # gpt-5 has 1 req/min limit even on Pro+; gpt-4.1 has much higher limits
+    rpm: 10            # proactive throttle: requests per minute (gpt-4.1=10, gpt-5=1)
+    max_input_tokens: 7000  # gpt-4.1 free tier cap = 8000 total; 7000 leaves room for system prompt + output    max_output_tokens: 4096  # explicit output cap; prevents silent truncation on free-tier models
+
+  # Google Gemini API (api_key: set PIPELINE_GEMINI_API_KEY env var — never hardcode)
+  gemini:
+    model: "gemini-2.0-flash"
+    rpm: 15            # free tier: 15 RPM
+    max_output_tokens: 8192
+
+  # Per-phase config — set provider + json_format only
+  # model: omit (or leave empty) to use ollama.default_model; set explicitly to override per-phase
+  phases:
+    summary:
+      provider: "ollama"
+      json_format: false   # plain text response — no JSON constraint
+    script:
+      provider: "ollama"
+      json_format: true
+    image_prompt:
+      provider: "ollama"
+      json_format: true
 
 # ComfyUI configuration
 comfyui_timeout: 300
