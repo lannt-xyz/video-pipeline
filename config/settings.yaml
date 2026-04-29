@@ -56,13 +56,13 @@ llm:
   # model: omit (or leave empty) to use ollama.default_model; set explicitly to override per-phase
   phases:
     summary:
-      provider: "deepseek"
+      provider: "ollama"
       json_format: false   # plain text response — no JSON constraint
     script:
-      provider: "deepseek"
+      provider: "ollama"
       json_format: true
     image_prompt:
-      provider: "deepseek"
+      provider: "ollama"
       json_format: true
 
 # ComfyUI configuration
@@ -121,3 +121,20 @@ lora_weights:
   xianxia_fantasy: 0.5
   dark_horror: 0.6
   ink_wash: 0.0
+
+# Retention / attention-constraint system (Phase 1+).
+# Feature flag controls whether the constraint pipeline (V2 scriptwriter, hook
+# competitive selection, gatekeeper reviewer) is active. Default off → legacy
+# behavior preserved. Thresholds are placeholders calibrated by Phase 1b
+# baseline + Phase 6 hand-rating.
+retention:
+  use_constraint_system: false        # master flag — flip to true after PR4 verify
+  max_exposition_ratio: 0.5           # placeholder; calibrate from baseline percentile 60
+  max_consecutive_same_energy: 2      # >2 same-energy shots → WARNING
+  lore_curiosity_buffer_shots: 2      # tension shots required before introducing a lore term
+  hook_min_score: 0.65                # hook total_score below this → 1 retry
+  reviewer_max_retries: 2             # gatekeeper retry budget per episode
+  hook_judge_weights:
+    curiosity_gap: 0.5
+    specificity: 0.25
+    pattern_interrupt: 0.25
