@@ -24,10 +24,10 @@ from models.schemas import EpisodeScript, ShotScript
 
 # ── Rule thresholds ──────────────────────────────────────────────────────────
 
-_MIN_TOTAL_WORDS = 210          # TTS must fill ≥ 60s at ~3.5 wps
+_MIN_TOTAL_WORDS = 170          # TTS must fill ≥65s at ~2.5 wps (F5-TTS VI speed=1.15) — 8s margin over 57s validator floor
 _MIN_HOOK_WORDS = 2             # shot 0 must have at least a sentence
 _MAX_HOOK_WORDS = 10            # shot 0 is a 2-3s hook — keep it short
-_MIN_SHOT_WORDS = 28            # shots 2+ (index ≥ 2) at 8s need ≥ 28 words
+_MIN_SHOT_WORDS = 26            # shots 2+ (index ≥ 2) at 8s need ≥ 26 words at 2.5 wps with margin
 _MIN_SHOT_COUNT = 8             # expected shot count
 _MAX_SHOT_COUNT = 10
 
@@ -120,7 +120,7 @@ def _rule_check(script: EpisodeScript) -> List[ReviewIssue]:
             issues.append(ReviewIssue(
                 shot_index=idx,
                 issue_type="narration_too_short",
-                description=f"Shot {idx+1} narration={words} words < {_MIN_SHOT_WORDS} minimum for 8s shot",
+                description=f"Shot {idx+1} narration={words} words < {_MIN_SHOT_WORDS} minimum for 8s shot at 2.5 wps",
             ))
         # scene_prompt horror atmosphere check (soft warn — not auto-fixed)
         prompt_lower = shot.scene_prompt.lower()
@@ -210,7 +210,7 @@ _FIX_SYSTEM = """You are a Vietnamese horror/supernatural short video scriptwrit
 You will receive a list of shots that FAILED quality checks.
 
 For each shot, rewrite ONLY the field that failed:
-- "narration_too_short": expand narration_text to at least 28-40 words (3-4 full Vietnamese sentences, maintain horror/tension, same character/event, present-tense first-person narrator)
+- "narration_too_short": expand narration_text to at least 26-36 words (3 full Vietnamese sentences, maintain horror/tension, same character/event, present-tense first-person narrator)
 - "hook_too_long": shorten narration_text to AT MOST 10 words — keep the most shocking fragment only
 - "scene_prompt_no_horror": add 1-2 specific horror/atmosphere tags to scene_prompt (comma-separated English tags, no sentences, no character names)
 - "narration_language_wrong": rewrite narration_text entirely in Vietnamese — same event/mood, first-person narrator ("Tôi..."), keep ≤10 words if it is the hook shot (shot_index 0 or 1)
@@ -278,6 +278,13 @@ def _llm_fix_shots(shots: List[ShotScript], issues: List[ReviewIssue], episode_n
                 list(result.keys()),
             )
             result = list_values[0]
+        elif "shot_index" in result and "narration_text" in result:
+            # Single fix object returned without list wrapper — promote to list.
+            logger.debug(
+                "Promoted single-dict fix to list | shot_index={}",
+                result.get("shot_index"),
+            )
+            result = [result]
 
     if not isinstance(result, list):
         raise ValueError(

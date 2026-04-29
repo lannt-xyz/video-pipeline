@@ -3,7 +3,7 @@ story_slug: "mao-son-troc-quy-nhan"
 
 # Episode planning
 total_chapters: 3534
-chapters_per_episode: 5
+chapters_per_episode: 1
 
 # API endpoints
 comfyui_url: "http://localhost:8188"
@@ -92,7 +92,7 @@ piper_speed: 1.1                   # atempo multiplier: 1.0=normal, 1.1=10% fast
 f5tts_model_dir: "models/f5tts"    # local cache dir for F5-TTS VI checkpoint
 f5tts_ref_audio: "assets/ref_voice.wav"  # 6-30s Vietnamese reference audio for voice cloning
 f5tts_ref_text: "Xin chào, tôi là người kể chuyện. Câu chuyện hôm nay sẽ đưa bạn vào một thế giới đầy bí ẩn và rùng rợn."  # transcript of ref audio
-f5tts_speed: 1.3                   # generation speed multiplier. Lower = clearer/calmer narration. 1.6 was too fast for comfortable listening; 1.3 keeps pace engaging without rushing. Note: pipeline word-budget (3.5 wps) was calibrated at 1.6 — at 1.3 actual rate is ~2.85 wps, so audio will run ~20% longer than planned shot durations; assembler stretches video to match audio.
+f5tts_speed: 1.15                  # generation speed multiplier. Calibrated so actual rate ≈ 2.5 wps Vietnamese. 1.6 → 3.5 wps (rushed); 1.3 → 2.85 wps (still rushed vs comfort target); 1.15 → ~2.5 wps (natural narration). Pipeline word-budget (LLM prompt, script_reviewer, _validate_narration_length) is now synced to 2.5 wps so 60s video ≈ 150 words; audio length matches planned shot durations within ±10%, eliminating systemic video-stretching.
 f5tts_device: "cuda"               # "cuda" (fast, ~6GB VRAM) | "cpu" (slow, RAM only)
 bgm_volume_db: -15
 # Lead-in silence at the start of every shot's mixed audio. Must be >= shot_transition_duration

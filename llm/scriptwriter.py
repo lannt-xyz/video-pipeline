@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -42,16 +43,16 @@ PACING RULE — STRICTLY ENFORCED:
 - Shot 1 and Shot 2: duration_sec MUST be 2 or 3.
 - Shot 1 and Shot 2: narration_text MUST be 10 words or fewer — TTS must fit within 2–3 seconds.
 - Shots 3–8: duration_sec = 8 for standard shots, 10 for climactic action shots.
-- Shots 3–8: narration_text MUST be 28–40 words (3–4 full sentences) — TTS must fill 8–11 seconds each.
-- TOTAL narration_text across ALL 8 shots MUST be AT LEAST 210 words. At ~3.5 words/second Vietnamese TTS (edge-tts vi-VN-HoaiMyNeural), that yields ≥60 seconds of TTS.
-- COUNT YOUR WORDS before outputting each shot. If narration_text for shot 3–8 is fewer than 28 words, REWRITE IT by adding descriptive detail (expand dialogue, add sensory detail, add character reaction).
-- HARD FAILURE: if the total is below 210 words your output WILL be rejected and you will be asked again.
+- Shots 3–8: narration_text MUST be 26–36 words (3 full sentences) — TTS must fill 8–11 seconds each at natural Vietnamese narration pace.
+- TOTAL narration_text across ALL 8 shots MUST be AT LEAST 200 words. At ~2.5 words/second Vietnamese TTS (F5-TTS VI at speed=1.15), that yields ≥70 seconds of TTS, leaving margin for sentence-level dedup and shot-level pacing variance.
+- COUNT YOUR WORDS before outputting each shot. If narration_text for shot 3–8 is fewer than 26 words, REWRITE IT by adding descriptive detail (expand dialogue, add sensory detail, add character reaction).
+- HARD FAILURE: if the total is below 200 words your output WILL be rejected and you will be asked again.
 
 NARRATION LENGTH EXAMPLES:
-WRONG (too short for a 8s shot): "Lão đạo sĩ này sẽ mang Diệp Thiếu Dương về Mao Sơn để dạy nó đạo pháp." — 15 words, only ~5s TTS, leaves 3s of silence.
-RIGHT (correct length for a 8s shot): "Thanh Vân Tử nhìn thẳng vào mắt Diệp Đại Công, giọng trầm xuống: Đứa trẻ này có căn cơ không bình thường. Ta sẽ đưa hắn lên Mao Sơn, dạy đạo pháp, rèn chân thân. Nhưng đây là con đường không thể quay đầu." — 42 words, ~14s TTS. ✓
-WRONG (too short for a 9s shot): "Thi Du Cao là một loại độc thi được sử dụng trong cổ thuật." — 13 words, only ~4s TTS.
-RIGHT (correct length for a 9s shot): "Thanh Vân Tử chậm rãi giải thích: Thi Du Cao không phải là bệnh, mà là một loại thi độc từ cổ thuật. Nó xâm nhập vào thi thể người chết, khiến xác không thể phân hủy, và dần biến thành một thứ nguy hiểm hơn bất kỳ con quỷ nào ta từng gặp." — 47 words, ~16s TTS. ✓
+WRONG (too short for a 8s shot): "Lão đạo sĩ mang Diệp Thiếu Dương về Mao Sơn." — 10 words, only ~4s TTS, leaves 4s of silence.
+RIGHT (correct length for a 8s shot): "Thanh Vân Tử nhìn thẳng vào mắt Diệp Đại Công, giọng trầm xuống: đứa trẻ này có căn cơ không bình thường. Ta sẽ đưa hắn lên Mao Sơn rèn chân thân." — 28 words, ~11s TTS. ✓
+WRONG (too short for a 9s shot): "Thi Du Cao là một loại độc thi được dùng trong cổ thuật." — 12 words, only ~5s TTS.
+RIGHT (correct length for a 9s shot): "Thi Du Cao không phải bệnh — đó là thi độc từ cổ thuật. Nó xâm nhập thi thể người chết, khiến xác không phân hủy, dần biến thành thứ nguy hiểm hơn bất kỳ con quỷ nào." — 32 words, ~13s TTS. ✓
 
 NARRATIVE RULES (most critical):
 - Each shot's narration_text tells what SPECIFICALLY happens — name the action, the character, the location.
@@ -60,6 +61,9 @@ NARRATIVE RULES (most critical):
 - LANGUAGE: narration_text MUST be written entirely in Vietnamese — no English words, phrases, or sentences anywhere, including hook shots.
   WRONG hook (English): "A face from the abyss" — FORBIDDEN even as a stylistic choice
   RIGHT hook (Vietnamese): "Hắn mở nắp quan tài... và thứ bên trong nhìn tôi." or "Khuôn mặt ấy không phải của người sống."
+- NO DUPLICATION between shots: each shot's narration_text MUST contain entirely NEW information. Do NOT repeat sentences, phrases, or paraphrase content from any previous shot. The story must MOVE FORWARD every shot.
+  WRONG: shot N="Tôi ngửi mùi rượu, thuốc lá. Hắn đang đọc tiểu thuyết." then shot N+1="Tôi ngửi mùi rượu, thuốc lá. Hắn đang đọc tiểu thuyết. ..." (verbatim repeat — REJECTED)
+  RIGHT: shot N introduces the action; shot N+1 advances to the consequence/next action.
 - Voice: first-person narrator ("Tôi..."), present-tense tension. The narrator is ALWAYS speaking — never describe what "Thanh Vân Tử" does from the outside.
   WRONG (third-person): "Thanh Vân Tử phát hiện ra rằng Diệp Thiếu Dương đã bị trúng độc thi. Hắn quyết định điều tra nguyên nhân."
   RIGHT (first-person): "Tôi nhìn vào vết thương trên cổ Thiếu Dương — đây không phải bệnh thông thường. Đây là độc thi. Kẻ nào đó đã cố tình gieo mầm tử thần vào cơ thể cậu ta."
@@ -288,11 +292,14 @@ Write EXACTLY 8 shots. Output JSON matching [OUTPUT CONTRACT] at the end.
 5. BANNED OPENINGS for ANY sentence: "X là một loại", "Theo ", "Vì ", "Bởi ", "Do ", "Thật ra ", "Vốn dĩ ".
 6. SHOT 1 must contain at least 1 tension verb (nhìn, hét, chạy, đập, mở, lao, vung, đâm, chạm, ngã, rít, xé, túm, đẩy, kéo).
 7. CLIFFHANGER SHOT 7: cut mid-revelation or open question. No CTA, no "theo dõi tiếp", no resolution.
+7b. NO DUPLICATION across shots: every shot's narration MUST be NEW information. Never repeat or paraphrase sentences/phrases from any earlier shot. The story moves forward each shot. (Rule: narration_uniqueness)
+   ❌ shot N="Tôi nhạo báng sách. Hắn nói: 'Tự viết đi.' Tôi đáp: 'Ta sẽ viết hơn.'" → shot N+1="...Hắn nói: 'Tự viết đi.' Tôi đáp: 'Ta sẽ viết hơn.'" (verbatim repeat — REJECTED)
+   ✅ shot N=action setup → shot N+1=consequence/escalation, no shared sentences.
 
 [STRUCTURE RULES]:
 8. Exactly 8 shots. 2-3 must have `is_key_shot=true`.
 9. Shot 0-1 duration: 2 or 3 seconds. Shots 2-7: 6-10 seconds. No shot >12s.
-10. Episode total narration ≥ 200 words (after the hook is finalized).
+10. Episode total narration ≥ 170 words (after the hook is finalized). Aim for 200+ to leave margin for sentence-level dedup.
 
 [LORE-CURIOSITY RULES]:
 11. Lore terms (Thi Du Cao, Mao Sơn pháp thuật, cổ thuật names — anything proper-noun that is NOT a character) may appear ONLY after at least 2 tension shots have set up curiosity.
@@ -436,10 +443,10 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
         f"Arc Overview:\n{arc_text}\n\n"
         "Remember: 8-10 shots, EXACTLY 2-3 with is_key_shot=true, "
         "scene_prompt in English, narration_text in Vietnamese.\n"
-        "CRITICAL: shots 3-8 MUST each have 28-40 words in narration_text. "
+        "CRITICAL: shots 3-8 MUST each have 26-36 words in narration_text. "
         "Total narration_text across SHOTS 2..N (excluding shot 1, which will be "
-        "replaced by a 10-word hook downstream) MUST be AT LEAST 200 words. "
-        "Aim for 220+ total words across all shots so the script survives the hook swap."
+        "replaced by a 10-word hook downstream) MUST be AT LEAST 180 words. "
+        "Aim for 210+ total words across all shots so the script survives the hook swap and sentence-level dedup."
     )
     # Phase 3: switch system prompt based on feature flag.
     system_prompt = (
@@ -480,6 +487,36 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
                     return ""
             return ""
 
+        # Dedup at raw level so the length gate below sees the *post-dedup*
+        # word count and triggers a tenacity retry when the LLM padded the
+        # script with duplicate sentences. Otherwise dedup runs later in
+        # write_episode_script and fails the hard gate with no retry path.
+        narrations = [_narration_of(s) for s in shots]
+        deduped = _dedup_narration_texts(narrations)
+        if deduped != narrations:
+            for idx, new_text in enumerate(deduped):
+                if isinstance(shots[idx], dict):
+                    shots[idx]["narration_text"] = new_text
+                # If shot is a JSON-encoded string, parse → mutate → re-serialize
+                # so downstream code (which calls _coerce_shot_item) still sees
+                # the deduped narration.
+                elif isinstance(shots[idx], str):
+                    try:
+                        parsed = json.loads(shots[idx])
+                        if isinstance(parsed, dict):
+                            parsed["narration_text"] = new_text
+                            shots[idx] = json.dumps(parsed, ensure_ascii=False)
+                    except json.JSONDecodeError:
+                        pass
+            logger.debug(
+                "Raw-stage dedup applied | episode={} drop_count={}",
+                episode_num,
+                sum(
+                    1 for a, b in zip(narrations, deduped)
+                    if len(a.split()) > len(b.split())
+                ),
+            )
+
         total_words = sum(len(_narration_of(s).split()) for s in shots)
         # Shot 0 will be REPLACED by _generate_hook_shot() (≤10 words by design).
         # Validate the post-hook total instead of raw total, otherwise scripts
@@ -487,10 +524,12 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
         # but fail the downstream hard gate after the hook swap.
         shot0_words = len(_narration_of(shots[0]).split()) if shots else 0
         effective_total = total_words - shot0_words + _HOOK_WORD_BUDGET
-        # Vietnamese edge-tts (vi-VN-HoaiMyNeural) clocks ~3.5 wps empirically.
-        # Validator requires final video ≥57s, so we need ≥57*3.5 ≈ 200 words.
-        # Use 200 as hard floor; below this TTS undershoots and validation fails.
-        min_total = 200
+        # Vietnamese F5-TTS at speed=1.15 clocks ~2.4-2.5 wps empirically.
+        # Validator requires final video ≥57s; with safety margin we target ≥65s
+        # → 65*2.5 ≈ 162 words. Floor 180 leaves ~18 word safety margin for the
+        # second-pass dedup that runs in `_deduplicate_narration` after this gate.
+        # Below 180 we retry.
+        min_total = 180
         if effective_total < min_total:
             # Identify short shots for diagnostics
             short_shots = []
@@ -498,17 +537,45 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
                 w = len(_narration_of(s).split())
                 if idx >= 2 and w < 20:
                     short_shots.append(f"shot{idx+1}={w}w")
+            # Dump raw LLM response so we can diagnose why narration is empty.
+            try:
+                dump_dir = Path("logs/script_rejects")
+                dump_dir.mkdir(parents=True, exist_ok=True)
+                dump_path = dump_dir / f"ep{episode_num}_{int(time.time())}.json"
+                dump_path.write_text(
+                    json.dumps(result, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                logger.warning("Dumped rejected script raw to {}", dump_path)
+            except Exception as dump_err:  # noqa: BLE001
+                logger.warning("Failed to dump rejected script: {}", dump_err)
+            # Show keys of first shot to spot field-name drift (e.g. "narration"
+            # instead of "narration_text").
+            first_shot_keys: list[str] = []
+            if shots:
+                first = shots[0]
+                if isinstance(first, dict):
+                    first_shot_keys = list(first.keys())
+                elif isinstance(first, str):
+                    try:
+                        parsed_first = json.loads(first)
+                        if isinstance(parsed_first, dict):
+                            first_shot_keys = list(parsed_first.keys())
+                    except json.JSONDecodeError:
+                        first_shot_keys = ["<unparseable-string>"]
             logger.warning(
-                "Script rejected: post-hook total_words={} (raw={}) < {}, retrying | episode={} short_shots={}",
-                effective_total, total_words, min_total, episode_num, short_shots or "none",
+                "Script rejected: post-hook total_words={} (raw={}) < {}, retrying | "
+                "episode={} short_shots={} shot_count={} first_shot_keys={}",
+                effective_total, total_words, min_total, episode_num,
+                short_shots or "none", len(shots), first_shot_keys,
             )
             raise ValueError(
                 f"narration too short post-hook: {effective_total} words < {min_total}; "
                 f"raw={total_words}, shot0={shot0_words}, short_shots={short_shots}"
             )
-        if effective_total < 210:
+        if effective_total < 200:
             logger.warning(
-                "Script accepted but narration is tight: post-hook total_words={} < 210 | episode={}",
+                "Script accepted but narration is tight: post-hook total_words={} < 200 | episode={}",
                 effective_total, episode_num,
             )
     return result
@@ -1630,6 +1697,9 @@ def write_episode_script(
         )
 
     # 5. Normalize in correct order — all on episode_shots (not new_shots)
+    # 5a. Strip duplicate sentences across shots BEFORE length validation,
+    # otherwise dedup-shrunk shots would slip past the length gate.
+    episode_shots = _deduplicate_narration(episode_shots, episode_num)
     episode_shots = _normalize_duration(episode_shots, episode_num)
     episode_shots = _normalize_hook_durations(episode_shots, episode_num)
     episode_shots = _validate_narration_length(episode_shots, episode_num)
@@ -1639,9 +1709,10 @@ def write_episode_script(
 
     # 5b. Hard total-words gate — final assembled shots (includes carry-over).
     # Prevents running expensive image/tts/video phases on scripts that will
-    # fail the downstream duration validator. 200 words ≈ 57s TTS @ 3.5 wps.
+    # fail the downstream duration validator (≥57s). 165 words ≈ 66s TTS @ 2.5 wps,
+    # giving ~9s safety margin over the 57s floor for empirical wps variance.
     _total_words = sum(len(s.narration_text.split()) for s in episode_shots)
-    _min_total = 200
+    _min_total = 165
     if _total_words < _min_total:
         per_shot = [
             f"shot{i+1}={len(s.narration_text.split())}w"
@@ -1649,7 +1720,7 @@ def write_episode_script(
         ]
         raise ValueError(
             f"Episode {episode_num} script too short: total_words={_total_words} "
-            f"< {_min_total} (≈ {_total_words/3.5:.1f}s TTS, need ≥57s). "
+            f"< {_min_total} (≈ {_total_words/2.5:.1f}s TTS, need ≥57s). "
             f"Per-shot: {per_shot}. "
             f"Rerun `--from-phase llm` to regenerate; if this persists, carry-over "
             f"from previous episode may be too short and LLM retries exhausted."
@@ -1729,23 +1800,130 @@ def load_episode_script(episode_num: int) -> EpisodeScript:
     return EpisodeScript(**json.loads(script_path.read_text(encoding="utf-8")))
 
 
+# Vietnamese sentence terminator regex.
+_SENT_SPLIT_RE = re.compile(r"(?<=[\.\!\?\u2026])\s+|\n+")
+# Strip punctuation/quotes for normalization.
+_PUNCT_RE = re.compile(r"[\.,!\?:;\u2026\"'\u2018\u2019\u201c\u201d\(\)\[\]\u2014\-]+")
+
+
+def _normalize_sentence(s: str) -> str:
+    """Lowercase + strip punctuation + collapse whitespace for fuzzy compare."""
+    s = _PUNCT_RE.sub(" ", s.lower())
+    return " ".join(s.split())
+
+
+def _sentence_overlap(a_tokens: set[str], b_tokens: set[str]) -> float:
+    """Jaccard similarity between two token sets."""
+    if not a_tokens or not b_tokens:
+        return 0.0
+    inter = len(a_tokens & b_tokens)
+    union = len(a_tokens | b_tokens)
+    return inter / union if union else 0.0
+
+
+def _dedup_narration_texts(narrations: list[str]) -> list[str]:
+    """Return narrations with duplicate sentences (vs earlier items) removed.
+
+    Pure string-level helper used by both raw-stage dedup (inside _write_raw)
+    and the ShotScript-level pass (_deduplicate_narration). Index 0 is left
+    untouched (hook). For each later item, drops sentences whose normalized
+    form is exact / substring / Jaccard ≥ 0.6 vs any previously accepted
+    sentence. Sentences with <3 tokens are kept as-is (interjections).
+    """
+    if len(narrations) <= 1:
+        return list(narrations)
+
+    sent_lists: list[list[str]] = []
+    norm_lists: list[list[str]] = []
+    token_lists: list[list[set[str]]] = []
+    for text in narrations:
+        raw_sents = [s.strip() for s in _SENT_SPLIT_RE.split(text or "") if s.strip()]
+        sent_lists.append(raw_sents)
+        norms = [_normalize_sentence(s) for s in raw_sents]
+        norm_lists.append(norms)
+        token_lists.append([set(n.split()) for n in norms])
+
+    accepted_norms: list[str] = list(norm_lists[0])
+    accepted_tokens: list[set[str]] = list(token_lists[0])
+
+    out: list[str] = [narrations[0]]
+    for i in range(1, len(narrations)):
+        kept_sents: list[str] = []
+        for sent, norm, toks in zip(sent_lists[i], norm_lists[i], token_lists[i]):
+            if not norm or len(toks) < 3:
+                kept_sents.append(sent)
+                accepted_norms.append(norm)
+                accepted_tokens.append(toks)
+                continue
+            is_dup = False
+            for prev_norm, prev_toks in zip(accepted_norms, accepted_tokens):
+                if not prev_norm or len(prev_toks) < 3:
+                    continue
+                if norm == prev_norm or norm in prev_norm or prev_norm in norm:
+                    is_dup = True
+                    break
+                if _sentence_overlap(toks, prev_toks) >= 0.6:
+                    is_dup = True
+                    break
+            if is_dup:
+                continue
+            kept_sents.append(sent)
+            accepted_norms.append(norm)
+            accepted_tokens.append(toks)
+
+        new_text = " ".join(kept_sents).strip()
+        if not new_text and sent_lists[i]:
+            new_text = sent_lists[i][0]
+        out.append(new_text)
+    return out
+
+
+def _deduplicate_narration(
+    shots: List[ShotScript], episode_num: int
+) -> List[ShotScript]:
+    """Remove sentences in shot N that duplicate sentences from shots 0..N-1.
+
+    LLM frequently repeats narration verbatim or near-verbatim across consecutive
+    shots (observed empirically in episode-002). Hook shot (index 0) is left
+    untouched. See `_dedup_narration_texts` for the matching rules.
+    """
+    if len(shots) <= 1:
+        return shots
+    deduped = _dedup_narration_texts([s.narration_text for s in shots])
+    new_shots = list(shots)
+    dropped = 0
+    for i, new_text in enumerate(deduped):
+        if new_text != shots[i].narration_text:
+            old_words = len(shots[i].narration_text.split())
+            new_words = len(new_text.split())
+            dropped += max(0, old_words - new_words)
+            new_shots[i] = shots[i].model_copy(update={"narration_text": new_text})
+    if dropped:
+        logger.info(
+            "Narration dedup | episode={} dropped_words={}",
+            episode_num, dropped,
+        )
+    return new_shots
+
+
+
 def _validate_narration_length(shots: List[ShotScript], episode_num: int) -> List[ShotScript]:
     """Log warnings for shots 2+ whose narration is too short relative to duration_sec.
 
-    Rule: non-hook shots should have >= (duration_sec * 2.5) words.
-    At ~3 words/sec Vietnamese TTS, 2.5 gives ~83% audio fill — avoids dead-air silence.
+    Rule: non-hook shots should have >= (duration_sec * 2.0) words.
+    At ~2.5 wps Vietnamese TTS (F5-TTS speed=1.15), 2.0 gives ~80% audio fill — avoids dead-air silence.
     Does NOT modify narration — this is a diagnostic/audit pass only.
     """
     total_words = sum(len(s.narration_text.split()) for s in shots)
     logger.info(
-        "Narration word count | episode={} total_words={} (~{:.0f}s TTS)",
-        episode_num, total_words, total_words / 3.0,
+        "Narration word count | episode={} total_words={} (~{:.0f}s TTS @ 2.5 wps)",
+        episode_num, total_words, total_words / 2.5,
     )
     for i, shot in enumerate(shots):
         if i < 2:
             continue  # Hook shots are exempt
         words = len(shot.narration_text.split())
-        min_words = int(shot.duration_sec * 2.5)
+        min_words = int(shot.duration_sec * 2.0)
         if words < min_words:
             logger.warning(
                 "Narration too short | episode={} shot={} words={} min={} duration={}s text={!r}",
