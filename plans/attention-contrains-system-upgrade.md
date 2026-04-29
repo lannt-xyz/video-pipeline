@@ -1,5 +1,14 @@
 # Plan: Attention-Constraint System Upgrade
 
+> **Implementation status (live):**
+> - [x] **Phase 1a** — Schema + Config (PR1)
+> - [x] **Phase 1b** — Validator + Baseline (PR2) — 19/19 tests pass; baseline empty until first script run
+> - [ ] Phase 2 — Hook Extraction stage (PR3)
+> - [ ] Phase 3 — Scriptwriter V2 behind flag (PR4)
+> - [ ] Phase 4 — Gatekeeper Reviewer + retry loop (PR4)
+> - [ ] Phase 5 — Frame decomposer energy-aware (PR5)
+> - [ ] Phase 6 — Calibration + flip flag (PR6)
+
 Chuyển toàn bộ retention logic từ "style guidance" sang **hard constraint system** có schema, có gatekeeper, có bounded retry. Không refactor pipeline architecture (orchestrator giữ nguyên), chỉ nâng cấp 4 stage hiện có + thêm 1 micro-stage hook scoring + thêm structured fields trong schema để enforce được.
 
 ## Bối cảnh phát hiện được

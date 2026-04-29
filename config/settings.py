@@ -62,6 +62,46 @@ class LLMConfig(BaseModel):
     phases: PhasesConfig = PhasesConfig()
 
 
+class HookJudgeWeights(BaseModel):
+    curiosity_gap: float = 0.5
+    specificity: float = 0.25
+    pattern_interrupt: float = 0.25
+
+    @model_validator(mode="after")
+    def _weights_sum_to_one(self) -> "HookJudgeWeights":
+        total = self.curiosity_gap + self.specificity + self.pattern_interrupt
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(
+                f"hook_judge_weights must sum to 1.0 (got {total:.4f}). "
+                "Adjust curiosity_gap, specificity, or pattern_interrupt."
+            )
+        return self
+
+
+class RetentionConfig(BaseModel):
+    """Attention-constraint system tunables (Phase 1+).
+
+    All thresholds are placeholders until Phase 1b baseline + Phase 6 calibration.
+    `use_constraint_system` is the master feature flag — false = legacy behavior.
+    """
+
+    use_constraint_system: bool = False
+    max_exposition_ratio: float = 0.5
+    max_consecutive_same_energy: int = 2
+    lore_curiosity_buffer_shots: int = 2
+    hook_min_score: float = 0.65
+    reviewer_max_retries: int = 2
+    hook_judge_weights: HookJudgeWeights = HookJudgeWeights()
+
+    @field_validator("max_exposition_ratio", "hook_min_score", mode="before")
+    @classmethod
+    def _clamp_ratio(cls, v: object) -> float:
+        v = float(v)  # type: ignore[arg-type]
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"Value {v} out of range [0.0, 1.0].")
+        return v
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         yaml_file=_YAML_FILE,
@@ -153,6 +193,9 @@ class Settings(BaseSettings):
 
     # LoRA weights
     lora_weights: dict = {}
+
+    # Retention / attention-constraint system (Phase 1+)
+    retention: RetentionConfig = RetentionConfig()
 
     @field_validator("total_chapters")
     @classmethod
