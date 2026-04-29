@@ -51,3 +51,6 @@ htmlcov/
 
 # ComfyUI output (if symlinked)
 ComfyUI/output/
+
+# TTS models
+models/f5tts/model_last.pt
