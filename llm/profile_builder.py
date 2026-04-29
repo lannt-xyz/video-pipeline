@@ -915,11 +915,18 @@ def build_profiles_for_episode(
                 logger.debug("Character not matched in wiki | name={}", name)
 
         if not target_ids:
-            raise RuntimeError(
-                f"None of the episode characters matched wiki_characters: {character_names}. "
-                "The arc summary likely contains placeholder names (empty chapter content). "
-                "Ensure chapters are crawled and have content before running the LLM phase."
+            # Arc gave us only generic descriptors (e.g. "Nữ tử thi" — "female
+            # corpse") that don't map to any wiki character. This is a normal
+            # situation for episodes whose cast is dominated by anonymous
+            # entities (ghosts, mobs). The downstream character extractor and
+            # image phase both tolerate empty profile dirs, so we degrade
+            # gracefully instead of blocking the pipeline.
+            logger.warning(
+                "No episode characters matched wiki_characters | names={} — "
+                "skipping profile build (likely generic descriptors only).",
+                character_names,
             )
+            return []
 
         logger.info(
             "Building profiles for {}/{} episode characters",

@@ -266,8 +266,24 @@ def _llm_fix_shots(shots: List[ShotScript], issues: List[ReviewIssue], episode_n
 
     result = script_client.generate_json(prompt=prompt, system=_FIX_SYSTEM, temperature=0.6)
 
+    # Some local LLMs wrap the array in a single-key object even when the
+    # prompt asks for a bare array (e.g. `{"shots": [...]}`). Unwrap any
+    # such single-list wrapper before validation so we don't burn all 3
+    # tenacity retries on a recoverable shape error.
+    if isinstance(result, dict):
+        list_values = [v for v in result.values() if isinstance(v, list)]
+        if len(list_values) == 1:
+            logger.debug(
+                "Unwrapped LLM dict-wrapped fix array | top_keys={}",
+                list(result.keys()),
+            )
+            result = list_values[0]
+
     if not isinstance(result, list):
-        raise ValueError(f"LLM returned non-list for shot fixes: {type(result)}")
+        raise ValueError(
+            f"LLM returned non-list for shot fixes: type={type(result).__name__} "
+            f"preview={str(result)[:200]!r}"
+        )
     if len(result) != len(payload):
         raise ValueError(
             f"LLM returned {len(result)} fixes but expected {len(payload)}"
@@ -331,6 +347,22 @@ def review_episode_script(episode_num: int) -> tuple[EpisodeScript, ReviewReport
     try:
         fixes = _llm_fix_shots(script.shots, fixable, episode_num)
     except Exception as exc:
+        # tenacity wraps the underlying error in RetryError after exhausting
+        # all attempts; surface the last real cause so the failure is
+        # actually diagnosable from logs instead of an opaque "RetryError".
+        from tenacity import RetryError
+        if isinstance(exc, RetryError) and exc.last_attempt is not None:
+            try:
+                inner = exc.last_attempt.exception()
+            except Exception:
+                inner = None
+            if inner is not None:
+                logger.error(
+                    "LLM shot fix failed after retries (proceeding with original script) | "
+                    "episode={} cause={}: {}",
+                    episode_num, type(inner).__name__, inner,
+                )
+                return script, report
         logger.error(
             "LLM shot fix failed (proceeding with original script) | episode={} error={}",
             episode_num, exc,

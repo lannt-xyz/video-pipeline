@@ -30,6 +30,11 @@ _ANCHOR_ETHNICITY_POSITIVE = (
 )
 
 _NEGATIVE = (
+    # Style leakage — keep anchors photoreal so they match Flux scene shots
+    "(anime:1.6), (manga:1.6), (cartoon:1.5), (illustration:1.5), "
+    "(painting:1.4), (digital art:1.4), (cel shading:1.5), (toon shading:1.5), "
+    "(3d render:1.4), (cgi:1.4), (line art:1.4), (concept art:1.3), "
+    "(comic book:1.4), (chibi:1.4), big shiny anime eyes, "
     # Hard NSFW block
     "nsfw, nudity, naked, nude, nipples, pussy, penis, genitals, "
     "underwear, lingerie, bikini, swimsuit, cleavage, navel, bare skin, "
@@ -48,18 +53,21 @@ _NEGATIVE = (
 
 
 def _build_anchor_scene_prompt(character: Character, angle_tags: str) -> str:
-    """Build a stable anchor prompt with explicit East Asian facial bias.
+    """Build a stable anchor prompt for photorealistic character anchors.
 
-    Character description comes FIRST (highest CLIP attention weight) so
-    distinctive features (hair colour, age, facial hair) are not overridden
-    by the generic ethnicity baseline.
+    Character description (now natural-English from the Flux-aligned extractor)
+    comes first so identity-defining features (age, hair, outfit) anchor the
+    composition. The ethnicity baseline and explicit photoreal style anchor
+    suppress the SDXL/anime drift the previous prompt was prone to.
     """
     return (
-        f"({character.description}:1.15), "
-        f"close-up portrait, face focus, head and shoulders only, {angle_tags}, "
+        f"{character.description}, "
+        f"close-up portrait, head and shoulders, face fully visible, {angle_tags}, "
         f"{_ANCHOR_ETHNICITY_POSITIVE}, "
-        "anime style, plain background, "
-        "detailed face, high quality, masterpiece, best quality, ultra detailed"
+        "photorealistic cinematic film still, live-action movie frame, "
+        "realistic skin texture and pores, natural soft daylight, "
+        "neutral light grey studio backdrop, sharp focus on face, "
+        "shot on 85mm portrait lens, shallow depth of field"
     )
 
 

@@ -12,61 +12,84 @@ from llm.client import ollama_client
 from models.schemas import Character
 from pipeline.state import StateDB
 
-_EXTRACTOR_SYSTEM = """You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL Danbooru model).
-Your job: read Vietnamese story context and produce a clean Danbooru tag list for each character.
+_EXTRACTOR_SYSTEM = """You are a character appearance designer for a photorealistic AI image model (Flux Dev).
+Your job: read Vietnamese story context and produce a clean visual description for each character.
 
-OUTPUT FORMAT — description field MUST be comma-separated Danbooru tags ONLY. No sentences, no prose.
+OUTPUT FORMAT — `description` is a comma-separated list of natural-English visual phrases.
+NOT Danbooru tags. NO underscores in phrases. NO weights like (tag:1.2). NO quality words
+(masterpiece, best quality, highly detailed, score_9, etc.). NO style words (anime, manga,
+cartoon, illustration). NO count tokens (1boy, 1girl, solo, 2boys). The image model gets
+those from the workflow — your job is purely visual identity.
 
-MANDATORY RULES:
-1. Gender prefix comes FIRST — no exceptions:
-     female → 1girl, solo
-     male   → 1boy, solo
-   This is CRITICAL. Read the story carefully. Do NOT assume gender from the name alone.
-   If the story says a character is male, use 1boy. If female, use 1girl. Never swap.
+MANDATORY content (10–14 phrases, in this order):
+  1. Age + body archetype  — e.g. "young man in his twenties", "elderly woman in her sixties", "teenage girl"
+  2. Build                 — e.g. "lean athletic build", "stocky build", "slender frame"
+  3. Hair                  — color + length + style — e.g. "short black hair, side parted"
+  4. Eyes                  — color + shape — e.g. "dark brown eyes, sharp narrow eyes"
+  5. Face                  — distinctive features — e.g. "high cheekbones, light scar across left brow"
+  6. Skin                  — tone — e.g. "fair skin", "tanned weathered skin"
+  7. Outfit (top)          — concrete garment names, see rule 3
+  8. Outfit (bottom)       — pants/skirt/robe details
+  9. Accessories           — only if visually distinctive — e.g. "leather waist pouch, small jade pendant"
+ 10. Default expression    — e.g. "serious focused expression", "calm watchful expression"
 
-2. Minimum 12 tags per character. Include these categories:
-     - Hair: color + length + style  (e.g. short black hair, low bun)
-     - Eyes: color + expression      (e.g. dark brown eyes, sharp eyes)
-     - Face: notable features        (e.g. pale skin, wrinkled face, round face, strong jaw)
-     - Outfit: clothes matching the story setting — see rule 4
-     - Accessories: rings, weapons, talismans if relevant
-     - Body type                     (e.g. slender, chubby build, athletic build)
-     - Expression                    (e.g. serious expression, cheerful expression, looking at viewer)
+RULE 1 — DO NOT use Danbooru shorthand. Write phrases the way a costume designer would.
+  WRONG:  "long_black_hair, blue_sclera, casual_outfit, tactical_wear, monk_outfit"
+  RIGHT:  "long black hair tied in a topknot, dark indigo eyes, plain dark grey changshan robe with wide sleeves"
 
-3. WEIGHTS — use sparingly. Only add (tag:weight) for ONE OR TWO truly defining visual features.
-   DO NOT add :1.2 or :1.3 to every tag. Over-weighting breaks PonyXL rendering.
-   WRONG: (dark jacket:1.2), (dark pants:1.2), (talisman:1.1), (urban setting:1.3)
-   RIGHT: dark jacket, dark pants, talisman in hand  — plain tags, no weights
+RULE 2 — NO supernatural eye colors unless the character is explicitly a ghost or spirit.
+  Living humans get: dark brown, black, hazel, grey. Never blue/red/glowing.
 
-4. Setting = modern urban ghost-hunter story (Mao Son Troc Quy Nhan).
-   Default clothing by role (unless the story explicitly says otherwise):
-     - Main characters (ghost hunters, students) → modern casual or tactical wear. NO hanfu.
-     - Daoist masters, elders → daoist robes, hanfu is acceptable.
-     - Ancient spirits/ghosts → traditional clothing acceptable.
-   WRONG for a modern male ghost hunter: hanfu, ancient robes, scholar robe
-   RIGHT for a modern male ghost hunter: jacket, dark pants, talisman in hand
+RULE 3 — Setting is modern urban ghost-hunter (Mao Son Troc Quy Nhan).
+  Default outfits by role:
+    - Living protagonists (ghost hunters, students):
+        modern street clothes — "dark hooded jacket, slim cargo pants, leather boots".
+        NO hanfu, NO armor, NO tactical military gear.
+    - Daoist masters / elders:
+        "Mao Shan taoist robe in deep indigo with bagua trim, wide cloth sash, cloth shoes".
+        Buddhist monk robes are WRONG — characters are Taoist.
+    - Ancient ghosts / spirits in flashbacks:
+        period clothing — "faded burial robe in dull red lacquer, weathered hemp inner garment".
 
-5. Hair style — avoid feminizing male characters:
-   FORBIDDEN on 1boy: side ponytail, twin tails, long flowing hair (unless story-explicit)
-   Safe male styles: short hair, buzz cut, side part, low bun, tied back
+RULE 4 — Avoid feminising male characters.
+  Forbidden on male: "long flowing hair", "twin tails", "side ponytail".
+  Default male hair: "short black hair", "topknot", "tied back at nape".
 
-6. Description must contain ONLY visual tags. Remove all abstract/personality words:
-   FORBIDDEN: mysterious aura, mysterious, scholar, scholar's aura, calculating, weathered feeling, spiritual energy, symbolizing, exudes, ethereal, elegant aura, noble aura, cold aura, dangerous aura, manipulative, cunning aura
-   REPLACE WITH visual equivalents: serious expression, sharp eyes, wrinkled face, cold expression, looking at viewer
+RULE 5 — Female character safety.
+  Forbidden on female: bare skin/cleavage/lingerie phrases, masculine build words
+  ("muscular", "broad shoulders"), facial-hair phrases ("beard", "stubble").
+  Required: every female description must explicitly state covering — e.g.
+  "fully clothed in a long-sleeved blouse" or "long-sleeved hanfu with high collar".
 
-7. Female character SAFETY rules — critical to prevent AI from generating monsters or males:
-   - ALWAYS start female characters with: 1girl, solo
-   - NEVER use tags that trigger male anatomy: masculine, muscular, broad shoulders, armor, horns, wings, claws
-   - FORBIDDEN soft tags on 1girl: mysterious, scholar, ethereal, revealing, revealing outfit, bare shoulders
-   - REQUIRED on every 1girl description: at least 2 of: fully clothed, high collar, long sleeves, traditional attire, modern casual wear, formal wear
-   - If character wears traditional clothes: use "traditional chinese clothing, fully clothed, high collar"
-   - If character wears modern clothes: use "blouse, dark skirt, modern casual wear" — no skin-exposure tags
+RULE 6 — Strip abstract personality / aura words.
+  FORBIDDEN: mysterious, ethereal, scholarly aura, spiritual energy, calculating,
+  weathered feeling, exudes, symbolises, otherworldly, elegant aura, dangerous aura.
+  REPLACE WITH visual cues: "serious expression", "calm watchful eyes", "deep frown lines".
 
-EXAMPLES:
-Modern male ghost hunter: "1boy, solo, short black hair, side part, dark brown eyes, sharp eyes, dark jacket, dark pants, talisman in hand, athletic build, serious expression, urban background"
-Chubby comic-relief male: "1boy, solo, chubby build, round face, short black hair, messy hair, dark brown eyes, wide eyes, cheerful expression, blue casual jacket, dark pants, talisman in hand"
-Daoist elder male: "1boy, solo, long white hair, low bun, white daoist robes, grey outer robe, thin beard, wrinkled face, wise gaze, wooden staff, prayer beads"
-Modern female supporting: "1girl, solo, long black hair, straight hair, dark eyes, gentle expression, pale skin, slender, white blouse, dark skirt, casual modern wear, looking at viewer"
+EXAMPLES (use as style reference, do not copy verbatim):
+  Male ghost hunter (modern):
+    "young man in his twenties, lean athletic build, short black hair side-parted,
+     dark brown eyes with sharp gaze, high cheekbones, fair skin, dark hooded jacket
+     over a charcoal t-shirt, slim black cargo pants, scuffed leather boots,
+     leather wrist strap holding a small talisman, focused determined expression"
+
+  Comic-relief male:
+    "young man in his twenties, stocky chubby build, round friendly face,
+     messy short black hair, dark brown round eyes, light olive skin,
+     bright blue casual hooded jacket, dark grey jeans, scuffed sneakers,
+     cloth shoulder bag, easy cheerful smile"
+
+  Mao Shan elder:
+    "elderly man in his sixties, lean wiry build, long grey hair tied in a topknot,
+     thin grey beard, weathered tanned skin, deep frown lines, sharp piercing dark eyes,
+     dark indigo Mao Shan taoist robe with bagua trim, wide white cloth sash,
+     black cloth shoes, wooden prayer beads on right wrist, calm authoritative expression"
+
+  Modern female student:
+    "young woman in her early twenties, slender frame, long straight black hair,
+     dark almond-shaped eyes, fair skin, soft round face, fully clothed in a
+     long-sleeved cream blouse buttoned to the throat, knee-length dark skirt,
+     dark stockings, plain ballet flats, gentle attentive expression"
 
 Return a JSON array:
 [
@@ -74,7 +97,7 @@ Return a JSON array:
     "name": "string — full character name in Vietnamese",
     "alias": ["string — alternative names or nicknames"],
     "gender": "male or female",
-    "description": "12+ comma-separated Danbooru tags — NO prose",
+    "description": "10–14 comma-separated natural-English phrases — NO Danbooru tags, NO weights, NO style/quality words",
     "relationships": {"other_character_name": "relationship description"}
   }
 ]"""
@@ -233,94 +256,107 @@ _FEMALE_FORBIDDEN_PHYSICAL = {
     "facial hair", "sideburns", "short beard", "long beard", "thick beard",
 }
 
+# Booru/PonyXL-era tokens that the extractor was previously asked to emit.
+# Removed because Flux Dev (T5 text encoder) prefers natural English and these
+# tokens dilute attention or trigger the wrong style.
+_BOORU_NOISE_TOKENS = {
+    "1boy", "1girl", "2boys", "2girls", "solo",
+    "score_9", "score_8", "score_7", "score_6", "score_5", "score_4",
+    "score_9_up", "score_8_up", "score_7_up", "score_6_up",
+    "masterpiece", "best quality", "highly detailed", "high quality",
+    "ultra detailed", "absurdres", "8k",
+}
+
+# Style words that pull the photoreal Flux model toward illustration.
+_STYLE_LEAK_TOKENS = {
+    "anime", "anime style", "manga", "manga style", "cartoon",
+    "illustration", "digital art", "concept art", "cel shading",
+    "toon shading", "3d render", "cgi", "painting", "line art",
+}
+
 _DAOIST_ROLES = {"daoist", "daoist priest", "monk", "elder", "mao shan"}
 
 
 def _sanitize_description(desc: str, gender: str) -> str:
-    """Programmatically clean LLM-generated Danbooru tag string.
+    """Clean LLM-generated character description for Flux photoreal generation.
 
-    Rules applied in order:
-    1. Strip leading/trailing whitespace from each tag.
-    2. Enforce gender prefix (1boy/1girl) as the very first tag.
-    3. Remove tags in _PROSE_TAGS (abstract personality words).
-    4. For male characters, replace forbidden hair tags with 'short hair'.
-    5. Trim numeric weights: keep at most the 2 highest-weight tags;
-       strip weight notation from the rest → plain tags.
+    The extractor system prompt asks for natural-English visual phrases (not
+    Danbooru tags), but the LLM occasionally regresses to old habits. This
+    pass enforces format hygiene:
+
+    1. Strip leading/trailing whitespace from each phrase.
+    2. Drop Danbooru count tokens (1boy/1girl/solo/2boys/...) — gender is
+       conveyed by the prose itself ("young man", "elderly woman").
+    3. Drop quality/score tokens (masterpiece, score_9, ...).
+    4. Drop style-leak tokens (anime, illustration, ...).
+    5. Drop abstract personality / aura phrases.
+    6. Replace forbidden male hairstyles with "short black hair".
+    7. Drop facial-hair phrases on female characters.
+    8. Strip explicit weight notation `(phrase:1.2)` → `phrase`.
+    9. Deduplicate while preserving order.
     """
-    tags = [t.strip() for t in desc.split(",") if t.strip()]
+    raw_phrases = [t.strip() for t in desc.split(",") if t.strip()]
 
-    # 1. Fix gender prefix — remove any stray 1girl/1boy/solo, re-prepend correct ones
-    gender_prefix = "1boy" if gender == "male" else "1girl"
-    tags = [t for t in tags if t not in ("1boy", "1girl", "solo")]
-    tags = [gender_prefix, "solo"] + tags
-
-    # 2. Remove prose tags (case-insensitive)
-    lower_prose = {p.lower() for p in _PROSE_TAGS}
-    tags = [t for t in tags if t.lower() not in lower_prose]
-
-    # 3. For male characters, replace feminizing hairstyle tags
-    if gender == "male":
-        cleaned = []
-        for t in tags:
-            # Strip weight notation for comparison
-            bare = re.sub(r"\((.+?):\d+\.\d+\)", r"\1", t).strip().lower()
-            if bare in _MALE_FORBIDDEN_HAIR:
-                logger.debug("Replaced forbidden male hair tag: {}", t)
-                cleaned.append("short hair")
-            else:
-                cleaned.append(t)
-        tags = cleaned
-
-    # 4. For female characters, remove male physical attributes (beard etc.)
+    drop_set = (
+        {p.lower() for p in _PROSE_TAGS}
+        | _BOORU_NOISE_TOKENS
+        | _STYLE_LEAK_TOKENS
+    )
     if gender == "female":
-        lower_forbidden = {p.lower() for p in _FEMALE_FORBIDDEN_PHYSICAL}
-        before = len(tags)
-        tags = [t for t in tags if t.lower() not in lower_forbidden]
-        if len(tags) < before:
-            logger.debug("Stripped {} male physical tags from female character", before - len(tags))
+        drop_set |= {p.lower() for p in _FEMALE_FORBIDDEN_PHYSICAL}
 
-    # 4. Trim weights — keep only the 2 highest-weight (tag:N.N) items;
-    #    strip weight notation from the rest.
-    weighted = [(i, t) for i, t in enumerate(tags) if re.search(r":\d+\.\d+", t)]
-    # Sort by weight value descending, keep top 2
-    def _weight_val(item):
-        m = re.search(r":(\d+\.\d+)", item[1])
-        return float(m.group(1)) if m else 1.0
-    weighted_sorted = sorted(weighted, key=_weight_val, reverse=True)
-    keep_indices = {i for i, _ in weighted_sorted[:2]}
-    result = []
-    for i, t in enumerate(tags):
-        if re.search(r":\d+\.\d+", t) and i not in keep_indices:
-            # Strip weight from the tag but keep the tag itself
-            plain = re.sub(r"\((.+?):\d+\.\d+\)", r"\1", t).strip()
-            result.append(plain)
-        else:
-            result.append(t)
+    cleaned: list[str] = []
+    for phrase in raw_phrases:
+        # Strip explicit weights — Flux ignores parenthesised weights and they
+        # add noise to the prompt budget.
+        bare = re.sub(r"\((.+?):\d+(?:\.\d+)?\)", r"\1", phrase).strip()
+        bare_lower = bare.lower()
 
-    # 5. Deduplicate preserving order
-    seen: set = set()
-    deduped = []
-    for t in result:
-        key = t.lower()
-        if key not in seen:
-            seen.add(key)
-            deduped.append(t)
+        if bare_lower in drop_set:
+            continue
+        # Substring match for style words inside longer phrases (e.g.
+        # "soft anime-style face").
+        if any(token in bare_lower for token in _STYLE_LEAK_TOKENS):
+            continue
+        # Replace forbidden male hairstyles wholesale.
+        if gender == "male" and bare_lower in _MALE_FORBIDDEN_HAIR:
+            cleaned.append("short black hair")
+            continue
+        cleaned.append(bare)
+
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for phrase in cleaned:
+        key = phrase.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(phrase)
 
     cleaned_desc = ", ".join(deduped)
     if cleaned_desc != desc:
-        logger.debug("Description sanitized | before={!r:.80} after={!r:.80}", desc, cleaned_desc)
+        logger.debug(
+            "Description sanitized | before={!r:.80} after={!r:.80}",
+            desc, cleaned_desc,
+        )
     return cleaned_desc
 
 
 def _default_character(name: str) -> Character:
-    """Fallback character with a generic male xianxia description."""
+    """Fallback used when the LLM fails to describe a character.
+
+    Uses the same natural-English format as the extractor system prompt so
+    downstream consumers (anchor gen, Flux scene gen) see a consistent style.
+    """
     return Character(
         name=name,
         gender="male",
         description=(
-            f"{name}, 1boy, male, young xianxia cultivator, handsome face, "
-            "sharp eyes, traditional chinese robes, long dark hair, "
-            "full body portrait"
+            "young man in his twenties, lean athletic build, "
+            "short black hair side-parted, dark brown eyes with sharp gaze, "
+            "high cheekbones, fair skin, dark hooded jacket, "
+            "slim black cargo pants, leather boots, focused expression"
         ),
     )
 

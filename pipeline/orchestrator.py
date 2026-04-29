@@ -546,52 +546,127 @@ _NEGATIVE_BASE = (
 )
 
 _THUMBNAIL_LIGHTING_TAGS = (
-    "bright daylight",
+    "bright cinematic lighting",
     "high key lighting",
+    "dramatic key light from one side",
     "soft warm rim light",
     "vivid saturated colors",
     "punchy contrast",
     "clear well-lit subject face",
 )
 
-# Aggressive: any tag whose lowercase contains one of these substrings is dropped
-# from the source scene_prompt before being sent to the thumbnail model. The
-# story is horror so prompts are loaded with low-key lighting/colour tags that
-# crush thumbnail visibility on mobile feeds.
+# Curiosity / "stop the scroll" composition tags. These do NOT change the
+# scene content (the actual horror beat from the key shot is preserved) —
+# they only enforce a poster-style framing that hints at a question:
+# "what is happening?", "what is that thing?", "why is this person reacting?".
+# Multiple cues are blended so the model picks at least one strong hook.
+_THUMBNAIL_CURIOSITY_TAGS = (
+    "movie poster composition",
+    "central subject filling frame",
+    "shocked widened eyes locking onto viewer",
+    "mid-action frozen moment",
+    "single mysterious focal object glowing softly",
+    "hand reaching toward something unseen off-frame",
+    "tension between subject and an unseen presence",
+    "story-implying gesture",
+)
+
+# Filter: ONLY strip pure lighting modifiers that crush mobile readability.
+# We deliberately keep concrete environment / object nouns (lantern, candle,
+# fog, mist) — those carry episode identity and should appear, just lit
+# more dramatically thanks to the lighting layer prepended below. Stripping
+# everything dark also stripped the very subject of the episode and made all
+# thumbnails look the same.
 _THUMBNAIL_DARK_FILTER_KEYWORDS = frozenset([
-    "dark", "dim", "night", "moonlit", "moonlight", "low light", "low-key",
-    "shadow", "shadowy", "gloom", "gloomy", "murky", "pitch", "pitch-black",
-    "void", "black void", "deep violet", "violet shadow", "teal shadow",
-    "blue rim", "cold blue", "candle", "candlelight", "lantern light",
-    "amber flicker", "dusk", "twilight", "midnight", "fog", "mist",
-    "silhouette", "rim-lighting silhouette", "underexposed",
+    # Lighting modifiers only — no nouns
+    "low light", "low-key", "low key", "dim", "dimly lit", "dimly-lit",
+    "underexposed", "murky lighting", "muddy lighting", "pitch", "pitch-black",
+    "void lit", "black void", "deep shadow", "heavy shadow", "shadowy",
+    "rim-lighting silhouette", "silhouette lighting", "backlit only",
+    "moonlit only", "candle only", "lantern only", "no fill light",
+    "underlit", "unlit",
 ])
 
 _THUMBNAIL_NEGATIVE = (
     "lowres, bad quality, blurry, underexposed, low key lighting, too dark, "
     "heavy shadows, murky colors, muddy colors, washed out, silhouette, "
-    "backlit subject, face in shadow, night scene"
+    "backlit subject, face in shadow, night scene, "
+    # Style guard — thumbnail must stay photoreal even though Flux drifts to anime
+    "(anime:1.5), (manga:1.5), (cartoon:1.4), (illustration:1.4), "
+    "(painting:1.3), (digital art:1.3), (3d render:1.3), (cgi:1.3), "
+    "boring composition, empty background, no subject, generic stock photo"
 )
 
 
-def _build_thumbnail_scene_prompt(scene_prompt: str) -> str:
-    """Build a brighter thumbnail prompt from shot scene tags.
+def _extract_subject_nouns(scene_prompt: str, max_keep: int = 8) -> str:
+    """Pull the concrete, content-bearing tokens out of a scene_prompt.
 
-    Aggressively strips any tag containing a dark/horror lighting keyword and
-    prepends explicit daylight tags so the thumbnail is readable on mobile feeds.
+    A scene_prompt is typically a comma-separated list where the first ~6–10
+    tokens describe the actual visual (person, action, location, key objects)
+    and later tokens are mood / lighting / camera. For thumbnails we want the
+    front of that list — that is where the episode's identity lives. Tags that
+    are purely lighting modifiers are dropped so the prepended thumbnail-
+    lighting layer wins.
     """
     tags = [t.strip() for t in scene_prompt.split(",") if t.strip()]
-    filtered = [
-        t for t in tags
-        if not any(k in t.lower() for k in _THUMBNAIL_DARK_FILTER_KEYWORDS)
-    ]
-    base = ", ".join(filtered)
-    extras = ", ".join(_THUMBNAIL_LIGHTING_TAGS)
-    # Lighting tags go FIRST so the model latches onto bright lighting before
-    # any residual mood tag from the scene description.
-    return ", ".join(
-        [p for p in [extras, "wide cinematic shot", base] if p]
+    kept: list[str] = []
+    for tag in tags:
+        lower = tag.lower()
+        if any(k in lower for k in _THUMBNAIL_DARK_FILTER_KEYWORDS):
+            continue
+        kept.append(tag)
+        if len(kept) >= max_keep:
+            break
+    return ", ".join(kept)
+
+
+def _build_thumbnail_scene_prompt(
+    scene_prompt: str,
+    *,
+    hook_scene_prompt: str | None = None,
+    episode_title: str | None = None,
+) -> str:
+    """Build a thumbnail prompt that ties to episode content and induces curiosity.
+
+    Inputs:
+        scene_prompt:      key shot scene_prompt — the visual peak of the episode.
+        hook_scene_prompt: optional shot-0 (hook) scene_prompt — adds the
+                           "stop the scroll" element from the opening beat.
+        episode_title:     optional Vietnamese title; not embedded in the
+                           prompt directly (Flux understands English best),
+                           but used to pick which curiosity cue is strongest
+                           if heuristics in future builds need it.
+
+    Strategy:
+        1. Lighting layer first (highest CLIP attention) — bright cinematic,
+           NOT pure daylight, so it still feels like horror but is readable
+           on a mobile feed.
+        2. Curiosity composition layer — poster framing, shocked face, a
+           single mysterious focal object. This is what creates the "what
+           is happening?" feeling.
+        3. Episode subject: the front-of-list nouns from the key shot
+           (person, action, key objects, location). When a hook scene is
+           provided we also blend in 3–4 hook nouns so the thumbnail
+           visually rhymes with the very first shot of the video.
+    """
+    _ = episode_title  # reserved for future title-aware variant selection
+
+    subject = _extract_subject_nouns(scene_prompt, max_keep=8)
+    hook_subject = (
+        _extract_subject_nouns(hook_scene_prompt, max_keep=4)
+        if hook_scene_prompt
+        else ""
     )
+
+    lighting = ", ".join(_THUMBNAIL_LIGHTING_TAGS)
+    curiosity = ", ".join(_THUMBNAIL_CURIOSITY_TAGS)
+
+    parts: list[str] = [lighting, curiosity, "wide cinematic shot"]
+    if subject:
+        parts.append(subject)
+    if hook_subject and hook_subject != subject:
+        parts.append(hook_subject)
+    return ", ".join(parts)
 
 
 
@@ -832,13 +907,26 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     # Thumbnail for first key shot
     key_indices = [i for i, s in enumerate(script.shots) if s.is_key_shot]
     if key_indices:
-        _generate_thumbnail(episode_num, script.shots[key_indices[0]], key_indices[0])
+        _generate_thumbnail(
+            episode_num,
+            script.shots[key_indices[0]],
+            key_indices[0],
+            hook_shot=script.shots[0] if script.shots else None,
+            episode_title=script.title,
+        )
 
     db.record_phase_done(episode_num, "images")
     db.set_episode_status(episode_num, "IMAGES_DONE")
 
 
-def _generate_thumbnail(episode_num: int, shot, shot_idx: int) -> None:
+def _generate_thumbnail(
+    episode_num: int,
+    shot,
+    shot_idx: int,
+    *,
+    hook_shot=None,
+    episode_title: str | None = None,
+) -> None:
     from image_gen.comfyui_client import comfyui_client
 
     thumbnail_path = (
@@ -847,7 +935,11 @@ def _generate_thumbnail(episode_num: int, shot, shot_idx: int) -> None:
     if thumbnail_path.exists():
         return
 
-    thumbnail_scene_prompt = _build_thumbnail_scene_prompt(shot.scene_prompt)
+    thumbnail_scene_prompt = _build_thumbnail_scene_prompt(
+        shot.scene_prompt,
+        hook_scene_prompt=(hook_shot.scene_prompt if hook_shot else None),
+        episode_title=episode_title,
+    )
 
     comfyui_client.generate_image(
         workflow_path="image_gen/workflows/thumbnail_flux.json",

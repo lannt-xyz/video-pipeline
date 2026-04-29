@@ -299,17 +299,49 @@ class TestImagePromptEnrichment:
 
 
 class TestThumbnailPrompt:
-    def test_thumbnail_prompt_filters_dark_tags_and_adds_bright_tags(self):
+    def test_thumbnail_prompt_keeps_subject_and_adds_lighting_and_curiosity(self):
         from pipeline.orchestrator import _build_thumbnail_scene_prompt
 
         src = "dark ruined shrine, moonlight fog, daoist figure, ritual altar"
         out = _build_thumbnail_scene_prompt(src)
 
-        assert "dark ruined shrine" not in out
-        assert "moonlight fog" not in out
+        # Episode subject must be preserved — that is what binds the
+        # thumbnail to the actual episode content.
         assert "daoist figure" in out
+        assert "ritual altar" in out
+        # Mood nouns are intentionally kept (the lighting layer prepended
+        # below dictates the readable look, not the strip filter).
+        assert "dark ruined shrine" in out
+        assert "moonlight fog" in out
+        # Bright cinematic lighting must be injected at the front so the
+        # model latches onto a readable look.
         assert "bright cinematic lighting" in out
         assert "high key lighting" in out
+        # A curiosity composition cue must be present to "stop the scroll".
+        assert "movie poster composition" in out
+
+    def test_thumbnail_prompt_blends_hook_subject_when_provided(self):
+        from pipeline.orchestrator import _build_thumbnail_scene_prompt
+
+        key = "dark courtyard, daoist figure, ritual altar"
+        hook = "young man, shocked face, glowing talisman in hand"
+        out = _build_thumbnail_scene_prompt(key, hook_scene_prompt=hook)
+
+        assert "daoist figure" in out
+        assert "shocked face" in out
+        assert "glowing talisman in hand" in out
+
+    def test_thumbnail_prompt_strips_pure_lighting_modifiers(self):
+        from pipeline.orchestrator import _build_thumbnail_scene_prompt
+
+        src = "young man, ritual altar, low key lighting, underexposed"
+        out = _build_thumbnail_scene_prompt(src)
+
+        assert "young man" in out
+        assert "ritual altar" in out
+        # Pure lighting modifiers that crush mobile readability are dropped.
+        assert "low key lighting" not in out
+        assert "underexposed" not in out
 
 
 class TestLLMPhaseOrchestrator:
