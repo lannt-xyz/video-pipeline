@@ -24,30 +24,44 @@ from llm.character_extractor import _sanitize_description, _slugify
 from llm.client import image_prompt_client
 from models.schemas import Character
 
+# Alias used for the chapter-context fallback path. Kept distinct from
+# image_prompt_client so we can swap providers per-path later if needed.
+_context_infer_client = image_prompt_client
+
 
 def _write_profile(json_path: Path, char: Character) -> None:
-    """Write profile.json while preserving any existing anchor_path on disk.
+    """Write profile.json while preserving on-disk fields the model resets to None.
 
-    model_dump_json() resets anchor_path to None (the model default).
-    This helper reads the existing anchor_path from disk and restores it
-    so a re-build never silently removes an already-generated anchor reference.
+    `Character.model_dump_json()` writes default values for fields like
+    `anchor_path` (and any future asset paths). Without preservation, a
+    rebuild silently wipes already-generated asset references on disk.
     """
-    existing_anchor: str | None = None
+    # Whitelist of fields that may exist on disk but should not be lost on rebuild.
+    _PRESERVE_FIELDS = ("anchor_path", "anchor_3q_path", "anchor_side_path")
+
+    existing: dict[str, Any] = {}
     if json_path.exists():
         try:
-            existing_anchor = json.loads(json_path.read_text(encoding="utf-8")).get("anchor_path")
+            existing = json.loads(json_path.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            existing = {}
+
     data = json.loads(char.model_dump_json(indent=2))
-    if existing_anchor and not data.get("anchor_path"):
-        data["anchor_path"] = existing_anchor
+    for field in _PRESERVE_FIELDS:
+        if existing.get(field) and not data.get(field):
+            data[field] = existing[field]
     json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 # ---------------------------------------------------------------------------
-# System prompt
+# System prompt (built lazily from settings.story_setting so swapping stories
+# does not require code changes — abstraction principle from copilot-instructions)
 # ---------------------------------------------------------------------------
 
-_PROFILE_SYSTEM = """You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL Danbooru model).
+
+def _build_profile_system() -> str:
+    s = settings.story_setting
+    forbidden = ", ".join(s.forbidden_visual_tags)
+    return f"""You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL Danbooru model).
 Your job: read a Vietnamese character profile in Markdown and produce a clean Danbooru tag list for that character.
 
 The Markdown profile contains:
@@ -57,13 +71,13 @@ The Markdown profile contains:
 - Relationships — context only, do NOT extract appearance from here.
 
 OUTPUT FORMAT — return a single JSON object (not an array):
-{
+{{
   "name": "full Vietnamese name",
   "alias": ["alternative names"],
   "gender": "male | female | unknown",
   "description": "12+ comma-separated Danbooru tags — NO prose",
-  "relationships": {"other_character_name": "relationship"}
-}
+  "relationships": {{"other_character_name": "relationship"}}
+}}
 
 GENDER RULES:
 - If profile says "Giới tính: male"   → gender = "male",    description starts with: 1boy, solo
@@ -75,33 +89,55 @@ MANDATORY DESCRIPTION RULES:
    - Hair: color + length + style
    - Eyes: color + expression
    - Face: notable features
-   - Outfit: clothes matching modern urban ghost-hunter setting (unless story says otherwise)
+   - Outfit: clothes matching the story setting (see SETTING below) unless Markdown overrides
    - Body type
    - Expression
 
-2. Setting = modern urban ghost-hunter story (Mao Son Troc Quy Nhan).
+2. SETTING = {s.genre_hint}.
    Default clothing:
-     - Ghost hunters / students → modern casual or tactical wear. NO hanfu.
-     - Daoist masters / elders  → daoist robes acceptable.
-     - Ancient spirits / ghosts → traditional clothing acceptable.
+     - Ordinary / young / hunter / student characters → {s.default_clothing_modern}.
+     - Master / elder / spirit / ancient characters  → {s.default_clothing_traditional}.
 
-3. FORBIDDEN abstract tags: mysterious aura, mysterious, scholar, ethereal, spiritual energy,
-   exudes, symbolizing, enchanting, magical presence, otherworldly, ancient wisdom, cunning aura,
-   dangerous aura, noble aura, cold aura.
+3. FORBIDDEN abstract tags: {forbidden}.
    REPLACE with visual equivalents: serious expression, sharp eyes, cold expression, etc.
 
 4. WEIGHTS — sparingly. Max 2 weighted tags. DO NOT weight every tag.
 
 5. For male (1boy): forbidden hair = side ponytail, twin tails, pigtails (unless story-explicit).
-6. For female (1girl): required at least 2 of: fully clothed, high collar, long sleeves,
+6. For female (1girl): require at least 2 of: fully clothed, high collar, long sleeves,
    traditional attire, modern casual wear, formal wear. NO bare shoulders / revealing tags.
 
 EXAMPLES:
-Modern male ghost hunter: "1boy, solo, short black hair, side part, dark brown eyes, sharp eyes, dark jacket, dark pants, talisman in hand, athletic build, serious expression"
+Modern male hunter: "1boy, solo, short black hair, side part, dark brown eyes, sharp eyes, dark jacket, dark pants, talisman in hand, athletic build, serious expression"
 Daoist elder male: "1boy, solo, long white hair, low bun, white daoist robes, thin beard, wrinkled face, wise gaze, wooden staff, prayer beads"
 Modern female: "1girl, solo, long black hair, straight hair, dark eyes, gentle expression, pale skin, slender, white blouse, dark skirt, modern casual wear, fully clothed, looking at viewer"
 Unknown/abstract entity: "1other, solo, androgynous, pale skin, white hair, long hair, blank expression, minimal white robes, glowing eyes, slim build, ethereal silhouette"
 """
+
+
+def _build_context_infer_system() -> str:
+    s = settings.story_setting
+    forbidden = ", ".join(s.forbidden_visual_tags)
+    return f"""You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL).
+You receive raw Vietnamese story excerpts mentioning a character. Infer their appearance from context clues.
+
+OUTPUT — return a single JSON object:
+{{
+  "name": "full Vietnamese name as written in the text",
+  "alias": [],
+  "gender": "male | female | unknown",
+  "description": "12+ comma-separated Danbooru tags — NO prose",
+  "relationships": {{}}
+}}
+
+RULES:
+- Infer gender from: pronouns (ông/anh/cậu/hắn → male; bà/cô/chị/nàng → female), role titles, family titles.
+- Infer age/build from role (con trai = young man; vợ = adult woman; lão = elderly).
+- MANDATORY description categories: hair color+style, eye expression, outfit (context-appropriate), body type, expression.
+- SETTING = {s.genre_hint}. Default: {s.default_clothing_modern}.
+- FORBIDDEN tags: {forbidden} — use visual equivalents only.
+- Minimum 12 tags. Start with gender count tag: 1boy/1girl/1other, solo.
+- If no physical clues at all, generate plausible appearance for the role/age inferred from context."""
 
 # ---------------------------------------------------------------------------
 # DB helpers
@@ -150,6 +186,173 @@ def _load_relations(character_id: str, con: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in cur.fetchall()]
 
 
+# ---------------------------------------------------------------------------
+# Appearance / gender inference helpers
+# ---------------------------------------------------------------------------
+
+# Appearance vocabulary used to validate that a free-form Vietnamese string
+# describes physical traits (vs. plot events). Lowercase, accent-preserving.
+#
+# Strong tokens: a single hit is enough — these are unambiguously about looks.
+# Weak tokens:   common words that can appear in plot text too (e.g. "mặt"
+#                in "mặt mọi người"); we require ≥2 hits before treating the
+#                string as an appearance description.
+_APPEARANCE_STRONG = (
+    "tóc", "mắt", "râu", "ria", "ngũ quan", "tướng mạo", "diện mạo",
+    "khuôn mặt", "mặt mũi", "vóc dáng", "thân hình", "thân thể",
+    "vết sẹo", "hình xăm",
+    "tuấn tú", "anh tuấn", "diễm lệ", "yêu kiều", "kiều diễm",
+    "xinh đẹp", "mỹ nhân", "mỹ miều",
+    "trang phục", "y phục", "quần áo", "hanfu", "đạo bào", "áo bào",
+    "khôi giáp", "mặt nạ",
+)
+_APPEARANCE_WEAK = (
+    "da", "thân", "vóc", "dáng", "mặt",
+    "cao", "thấp", "lùn", "gầy", "béo", "mập",
+    "đẹp", "xấu", "xinh", "tuấn", "diễm",
+    "trắng", "đen", "vàng", "xanh", "đỏ", "tím", "nâu", "bạc", "hồng",
+    "áo", "quần", "váy", "khăn", "mũ", "giày", "đai", "lụa",
+    "tuổi", "trẻ", "trung niên", "già", "lão", "thiếu",
+)
+
+
+def _is_appearance_text(text: str) -> bool:
+    """Return True when `text` describes physical appearance.
+
+    Single hit on a strong-token list is enough; weak tokens require at
+    least two distinct matches to overcome plot-text noise like
+    "Bị ép buộc đi tiểu trước mặt mọi người" (only "mặt" matches, weak).
+    """
+    if not text:
+        return False
+    low = text.lower()
+    if any(k in low for k in _APPEARANCE_STRONG):
+        return True
+    weak_hits = sum(1 for k in _APPEARANCE_WEAK if k in low)
+    return weak_hits >= 2
+
+
+# Gender heuristics — Vietnamese / Sino-Vietnamese cues. Multi-word phrases
+# come first so longer matches win over their substrings.
+_MALE_NAME_SUFFIXES = (
+    "tiên sinh", "chân nhân", "đạo nhân", "hòa thượng", "đạo trưởng",
+    "thiếu gia", "công tử", "lão gia", "đại nhân",
+    "tử", "lão", "ông", "huynh", "đệ", "công", "vương", "đế", "hoàng",
+    "lang", "phu", "sư phụ",
+)
+_FEMALE_NAME_SUFFIXES = (
+    "phu nhân", "công chúa", "thái hậu", "tiên cô", "thiếu nữ",
+    "cô nương", "nương tử",
+    "nương", "thị", "tỷ", "muội", "cô", "bà", "nữ",
+)
+
+_MALE_TEXT_CUES = (
+    "nam giới", "nam nhân", "đàn ông", "con trai", "chàng trai", "thiếu niên",
+    "lão ông", "cụ ông", "anh tuấn", "tuấn tú", "vạm vỡ", "có râu",
+    "cường tráng", "hảo hán", "hắn", " ông ", " anh ", " cậu ",
+)
+_FEMALE_TEXT_CUES = (
+    "nữ giới", "nữ nhân", "đàn bà", "con gái", "thiếu nữ", "cô gái",
+    "cô nương", "nương tử", "diễm lệ", "yêu kiều", "xinh đẹp", "mỹ nhân",
+    "kiều diễm", "nàng", " bà ", " cô ", " chị ",
+)
+
+
+def _name_suffix_gender(name: str) -> Optional[str]:
+    """Infer gender from a Sino-Vietnamese name's title/suffix words.
+
+    Matches whole words at end of the name (preceded by space) or the entire
+    name equals the suffix — avoids false positives like "Tử" inside "Tử Vi".
+    Returns None when ambiguous.
+    """
+    if not name:
+        return None
+    low = name.strip().lower()
+    for suf in _FEMALE_NAME_SUFFIXES:
+        if low.endswith(" " + suf) or low == suf:
+            return "female"
+    for suf in _MALE_NAME_SUFFIXES:
+        if low.endswith(" " + suf) or low == suf:
+            return "male"
+    return None
+
+
+def _text_gender(*texts: Optional[str]) -> Optional[str]:
+    """Tally male/female cue words across one or more free-form texts.
+
+    Single-character cues like " ông " / " bà " are padded with whitespace
+    so they only match as standalone words. Returns the gender with the
+    higher count; ties → None.
+    """
+    blob = " ".join(t for t in texts if t).lower()
+    if not blob.strip():
+        return None
+    blob = " " + blob + " "
+    male = sum(blob.count(c) for c in _MALE_TEXT_CUES)
+    female = sum(blob.count(c) for c in _FEMALE_TEXT_CUES)
+    if male > female and male > 0:
+        return "male"
+    if female > male and female > 0:
+        return "female"
+    return None
+
+
+def _infer_gender(
+    name: str,
+    aliases: list[str],
+    visual_anchor: Optional[str],
+    personality: Optional[str],
+    traits: list[str],
+    relations: list[dict],
+    snapshot: Optional[dict] = None,
+    supplemental: Optional[list[dict]] = None,
+) -> Optional[str]:
+    """Multi-signal Vietnamese gender inference.
+
+    Priority — first decisive signal wins:
+      1. Name / alias suffix titles.
+      2. Cue-word tally in visual_anchor.
+      3. Cue-word tally in personality + traits.
+      4. Cue-word tally in relation descriptions.
+      5. Cue-word tally in best snapshot + supplemental snapshot fields
+         (outfit / physical_description). Catches cases like male-typical
+         "quần tây", "áo sơ mi" outfits when DB gender is null.
+
+    Returns None when no signal is decisive (caller falls back to "unknown").
+    """
+    for candidate in [name, *(aliases or [])]:
+        if g := _name_suffix_gender(candidate):
+            return g
+
+    if g := _text_gender(visual_anchor):
+        return g
+
+    if g := _text_gender(personality, " ".join(traits or [])):
+        return g
+
+    if relations:
+        rel_blob = " ".join((r.get("description") or "") for r in relations)
+        if g := _text_gender(rel_blob):
+            return g
+
+    snap_texts: list[str] = []
+    if snapshot:
+        for k in ("physical_description", "outfit", "weapon"):
+            v = snapshot.get(k)
+            if v:
+                snap_texts.append(str(v))
+    for s in supplemental or []:
+        for k in ("physical_description", "outfit", "weapon"):
+            v = s.get(k)
+            if v:
+                snap_texts.append(str(v))
+    if snap_texts:
+        if g := _text_gender(" ".join(snap_texts)):
+            return g
+
+    return None
+
+
 def _load_artifacts(character_id: str, con: sqlite3.Connection) -> list[dict]:
     # Check tables exist and have rows first to avoid expensive JOIN on empty tables
     cur = con.execute("SELECT COUNT(*) FROM wiki_artifact_snapshots WHERE owner_id = ?", (character_id,))
@@ -182,7 +385,13 @@ def _load_artifacts(character_id: str, con: sqlite3.Connection) -> list[dict]:
 
 
 def _load_best_snapshot(character_id: str, con: sqlite3.Connection) -> Optional[dict]:
-    """Load the highest visual_importance active snapshot for fallback."""
+    """Load the highest visual_importance active snapshot for fallback.
+
+    Filters out snapshots whose `physical_description` is event-text only
+    (e.g. "Bị ép buộc đi tiểu trước mặt mọi người.") because the wiki
+    extractor sometimes stores plot events in this field. Such text causes
+    the downstream LLM to emit nonsense appearance tags.
+    """
     cur = con.execute(
         """
         SELECT physical_description, outfit, weapon, vfx_vibes, level, chapter_start
@@ -190,12 +399,28 @@ def _load_best_snapshot(character_id: str, con: sqlite3.Connection) -> Optional[
         WHERE character_id = ? AND is_active = 1
           AND (physical_description IS NOT NULL OR outfit IS NOT NULL)
         ORDER BY visual_importance DESC, chapter_start ASC
-        LIMIT 1
+        LIMIT 5
         """,
         (character_id,),
     )
-    row = cur.fetchone()
-    return dict(row) if row else None
+    candidates = [dict(r) for r in cur.fetchall()]
+    if not candidates:
+        return None
+
+    for snap in candidates:
+        phys = (snap.get("physical_description") or "").strip()
+        outfit = (snap.get("outfit") or "").strip()
+        # Treat physical_description as appearance only when it contains
+        # at least one appearance keyword. Otherwise, scrub it so downstream
+        # markdown does not present plot text as Visual Anchor.
+        if phys and not _is_appearance_text(phys):
+            snap["physical_description"] = None
+            phys = ""
+        # Snapshot is useful only if it carries SOME visual signal.
+        if phys or outfit or (snap.get("weapon") or "").strip():
+            return snap
+
+    return None
 
 
 def _load_extraction_coverage(con: sqlite3.Connection) -> Optional[str]:
@@ -237,27 +462,6 @@ def _load_supplemental_snapshots(character_id: str, con: sqlite3.Connection, lim
 # ---------------------------------------------------------------------------
 # Chapter-context fallback helpers
 # ---------------------------------------------------------------------------
-
-_CONTEXT_INFER_SYSTEM = """You are a character appearance designer for AI image generation (Stable Diffusion / PonyXL).
-You receive raw Vietnamese story excerpts mentioning a character. Infer their appearance from context clues.
-
-OUTPUT — return a single JSON object:
-{
-  "name": "full Vietnamese name as written in the text",
-  "alias": [],
-  "gender": "male | female | unknown",
-  "description": "12+ comma-separated Danbooru tags — NO prose",
-  "relationships": {}
-}
-
-RULES:
-- Infer gender from: pronouns (ông/anh/cậu → male; bà/cô/chị → female), role titles, family titles.
-- Infer age/build from: role (con trai = young man; vợ = adult woman; lão = elderly).
-- MANDATORY description categories: hair color+style, eye expression, outfit (context-appropriate), body type, expression.
-- Setting = modern Vietnamese rural/urban ghost-hunter story. Default: modern casual clothing.
-- FORBIDDEN tags: mysterious aura, spiritual energy, ethereal, enchanting — use visual equivalents only.
-- Minimum 12 tags. Start with gender count tag: 1boy/1girl/1other, solo.
-- If no physical description clues at all, generate plausible appearance for role/age inferred from context."""
 
 _CONTEXT_SNIPPET_WINDOW = 400  # chars around each mention
 _CONTEXT_MAX_SNIPPETS = 5
@@ -349,8 +553,16 @@ def _load_chapter_context(
 def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
     """Build Markdown anchor profile for one character.
 
-    Returns None if the character lacks enough data to build a meaningful anchor
-    (visual_anchor, personality, and traits_json all null/empty).
+    Returns None when there is no usable APPEARANCE signal — the caller
+    should then either skip the character or fall back to chapter-context
+    inference. Plot-only fields (traits / personality without any visual
+    description) are NOT considered enough — they cause the LLM to fabricate.
+
+    Appearance signals checked, in order:
+      - `visual_anchor` containing real appearance keywords
+      - best `wiki_snapshots` row with `physical_description` (passing
+        `_is_appearance_text`), `outfit`, or `weapon`
+      - any supplemental snapshot rows with outfit/weapon
     """
     char = _load_wiki_character(character_id, con)
     if char is None:
@@ -360,28 +572,40 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
     visual_anchor: Optional[str] = char.get("visual_anchor")
     personality: Optional[str] = char.get("personality")
     traits: list[str] = char.get("traits_json") or []
+    aliases: list[str] = char.get("aliases_json") or []
+    relations = _load_relations(character_id, con)
 
-    # Load best snapshot: use as fallback when visual_anchor is absent,
-    # or as supplemental visual detail when visual_anchor is too short.
-    _VA_WEAK_THRESHOLD = 80  # chars — below this the anchor is treated as insufficient
-    snapshot: Optional[dict] = None
+    # _VA_WEAK_THRESHOLD: visual_anchor strings shorter than this are treated
+    # as insufficient on their own — we'll pull supplemental snapshot data to
+    # enrich the markdown so the LLM has something concrete to anchor on.
+    _VA_WEAK_THRESHOLD = 80
+    snapshot: Optional[dict] = _load_best_snapshot(character_id, con)
+    supplemental = _load_supplemental_snapshots(character_id, con, limit=5)
     va_is_weak = not visual_anchor or len((visual_anchor or "").strip()) < _VA_WEAK_THRESHOLD
 
-    if not visual_anchor and not personality and not traits:
-        # No data at all — need snapshot or skip
-        snapshot = _load_best_snapshot(character_id, con)
-        if snapshot is None:
-            logger.debug("Skipping {} — no visual data", character_id)
-            return None
-        logger.debug("Using snapshot fallback for {} (ch.{})", character_id, snapshot["chapter_start"])
-    elif va_is_weak:
-        # visual_anchor exists but is too vague — load best snapshot for supplemental detail
-        snapshot = _load_best_snapshot(character_id, con)
-        if snapshot:
-            logger.debug(
-                "visual_anchor weak ({} chars); loading snapshot supplement for {} (ch.{})",
-                len((visual_anchor or "").strip()), character_id, snapshot["chapter_start"],
-            )
+    # --- Appearance gate ---------------------------------------------------
+    # Markdown is only useful to the LLM when at least one concrete visual
+    # signal exists. Otherwise we'd ship plot-only data and the LLM would
+    # hallucinate an appearance — exactly the bug we're fixing.
+    has_va_appearance = bool(visual_anchor and _is_appearance_text(visual_anchor))
+    has_snapshot_appearance = bool(
+        snapshot and (
+            (snapshot.get("physical_description") or "").strip()
+            or (snapshot.get("outfit") or "").strip()
+            or (snapshot.get("weapon") or "").strip()
+        )
+    )
+    has_supplemental_appearance = any(
+        (s.get("outfit") or "").strip() or (s.get("weapon") or "").strip()
+        for s in supplemental
+    )
+
+    if not (has_va_appearance or has_snapshot_appearance or has_supplemental_appearance):
+        logger.debug(
+            "Skipping {} — no appearance signal (VA only contains plot/personality text)",
+            character_id,
+        )
+        return None
 
     lines: list[str] = []
 
@@ -390,32 +614,28 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
         s = (v or "").strip()
         return s if s and s.lower() not in ("null", "none", "n/a") else None
 
-    # Infer gender from visual_anchor text when DB gender is NULL.
-    # Simple keyword match on the first 60 chars covers "Nam giới" / "Nữ giới" reliably.
-    def _infer_gender_from_anchor(anchor_text: Optional[str]) -> Optional[str]:
-        if not anchor_text:
-            return None
-        sample = anchor_text[:60].lower()
-        if any(k in sample for k in ("nam giới", "nam nhân", "đàn ông", "con trai", "chàng trai", "lão ông", "cụ ông")):
-            return "male"
-        if any(k in sample for k in ("nữ giới", "nữ nhân", "đàn bà", "con gái", "thiếu nữ", "cô gái", "cô nương", "nương tử")):
-            return "female"
-        return None
-
     # --- Header ---
     lines.append(f"# {char['name']}")
     lines.append("")
 
-    # Gender on its own line — matches system-prompt GENDER RULES pattern exactly.
+    # Gender — DB value first, then multi-signal Vietnamese inference.
     gender = _val(char.get("gender"))
     if gender is None:
-        # Visual anchor often starts with "Nam giới" or "Nữ giới" — infer from there.
-        inferred = _infer_gender_from_anchor(_val(char.get("visual_anchor")))
+        inferred = _infer_gender(
+            name=char.get("name") or "",
+            aliases=aliases,
+            visual_anchor=_val(char.get("visual_anchor")),
+            personality=_val(char.get("personality")),
+            traits=traits,
+            relations=relations,
+            snapshot=snapshot,
+            supplemental=supplemental,
+        )
         if inferred:
             gender = inferred
             logger.debug(
-                "Gender inferred from visual_anchor | id={} name={} → {}",
-                char.get("id"), char.get("name"), gender,
+                "Gender inferred | id={} name={} → {}",
+                character_id, char.get("name"), gender,
             )
     gender = gender or "unknown"
     lines.append(f"**Giới tính**: {gender}")
@@ -432,8 +652,8 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
     if meta_parts:
         lines.append(" | ".join(meta_parts))
 
-    if char["aliases_json"]:
-        lines.append(f"**Tên khác**: {', '.join(char['aliases_json'])}")
+    if aliases:
+        lines.append(f"**Tên khác**: {', '.join(aliases)}")
 
     if traits:
         lines.append(f"**Tính cách**: {', '.join(traits)}")
@@ -444,12 +664,11 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
     if visual_anchor:
         lines.append(f"**Visual Anchor**: {visual_anchor}")
 
-    # Always include snapshot supplement when visual_anchor is weak
-    supplemental = []
-    if va_is_weak and snapshot:
-        supplemental = _load_supplemental_snapshots(character_id, con, limit=5)
-
-    if supplemental:
+    # Supplemental snapshots — included whenever VA is weak, even if best
+    # snapshot was rejected (event-only physical_description). Earlier code
+    # gated this on `snapshot` truthiness which dropped useful outfit/weapon
+    # rows for characters with sparse anchors.
+    if va_is_weak and supplemental:
         lines.append("")
         lines.append("## Ngoại hình từ snapshot (bổ sung)")
         seen_outfits: set[str] = set()
@@ -475,7 +694,9 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
                 lines.append("- " + " | ".join(parts))
 
     if not visual_anchor and snapshot:
-        # Fallback: build visual anchor from snapshot fields
+        # Fallback: build visual anchor from snapshot fields. `_load_best_snapshot`
+        # has already null-ed `physical_description` if it was plot-text only,
+        # so anything we read here is safe to surface as appearance.
         snap_parts: list[str] = []
         if snapshot.get("physical_description"):
             snap_parts.append(snapshot["physical_description"])
@@ -486,7 +707,10 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
         if snapshot.get("vfx_vibes"):
             snap_parts.append(f"VFX: {snapshot['vfx_vibes']}")
         if snap_parts:
-            lines.append(f"**Visual Anchor** (từ snapshot ch.{snapshot['chapter_start']}): {' | '.join(snap_parts)}")
+            lines.append(
+                f"**Visual Anchor** (từ snapshot ch.{snapshot['chapter_start']}): "
+                + " | ".join(snap_parts)
+            )
         if snapshot.get("level"):
             lines.append(f"**Cảnh giới**: {snapshot['level']}")
 
@@ -521,8 +745,7 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
             if a.get("is_key_event"):
                 lines.append("- Sự kiện chủ chốt: có")
 
-    # --- Relations ---
-    relations = _load_relations(character_id, con)
+    # --- Relations (already loaded near the top for gender inference) ---
     if relations:
         lines.append("")
         lines.append("## Quan hệ")
@@ -549,7 +772,7 @@ def build_markdown(character_id: str, con: sqlite3.Connection) -> Optional[str]:
 def _derive_tags(markdown_text: str) -> dict[str, Any]:
     result = image_prompt_client.generate_json(
         prompt=markdown_text,
-        system=_PROFILE_SYSTEM,
+        system=_build_profile_system(),
         temperature=0.2,
     )
     if isinstance(result, list) and result:
@@ -557,6 +780,26 @@ def _derive_tags(markdown_text: str) -> dict[str, Any]:
     if isinstance(result, dict):
         return result
     raise ValueError(f"LLM returned unexpected type: {type(result)}")
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
+def _derive_tags_from_context(char_name: str, context: str) -> dict[str, Any]:
+    """Fallback path: infer profile from raw chapter excerpts when wiki has no
+    structured visual data. Wrapped with the same retry budget as `_derive_tags`.
+    """
+    result = _context_infer_client.generate_json(
+        prompt=(
+            f"Character name: {char_name}\n\n"
+            f"Story excerpts mentioning this character:\n\n{context}"
+        ),
+        system=_build_context_infer_system(),
+        temperature=0.3,
+    )
+    if isinstance(result, list) and result:
+        return result[0]
+    if isinstance(result, dict):
+        return result
+    raise ValueError(f"Context-inference LLM returned unexpected type: {type(result)}")
 
 
 def _sanitize_unknown(desc: str) -> str:
@@ -719,16 +962,7 @@ def build_profiles_for_episode(
                         "No wiki visual data — inferring from chapter context | id={} snippets_chars={}",
                         char_id, len(context),
                     )
-                    raw = ollama_client.generate_json(
-                        prompt=(
-                            f"Character name: {char_name}\n\n"
-                            f"Story excerpts mentioning this character:\n\n{context}"
-                        ),
-                        system=_CONTEXT_INFER_SYSTEM,
-                        temperature=0.3,
-                    )
-                    if isinstance(raw, list) and raw:
-                        raw = raw[0]
+                    raw = _derive_tags_from_context(char_name, context)
                     if not isinstance(raw, dict):
                         logger.warning("Context inference returned unexpected type | id={}", char_id)
                         skipped += 1
@@ -907,19 +1141,24 @@ if __name__ == "__main__":
     char_ids = [a for a in args if not a.startswith("--")]
 
     if char_ids:
-        # Build specific characters only
-        db_path = settings.db_path
-        if not Path(db_path).exists():
-            flat = Path("data") / f"{settings.story_slug}.db"
-            db_path = str(flat) if flat.exists() else db_path
+        # Build specific characters only.
+        # Use _resolve_wiki_db so we hit the same DB path the bulk builder uses.
+        db_path = _resolve_wiki_db(settings.db_path) or settings.db_path
 
         chars_dir = Path(settings.data_dir) / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
 
         with _open_db(db_path) as con:
             for char_id in char_ids:
-                char_dir = chars_dir / char_id
-                char_dir.mkdir(parents=True, exist_ok=True)
+                # Resolve canonical folder via the same helper bulk builds use,
+                # so CLI-built profiles land in the same directory and aren't
+                # silently shadowed on the next bulk run.
+                wiki_row = con.execute(
+                    "SELECT name FROM wiki_characters WHERE character_id=?",
+                    (char_id,),
+                ).fetchone()
+                char_name = wiki_row["name"] if wiki_row else char_id
+                char_dir = _resolve_character_dir(chars_dir, char_id, char_name)
                 json_path = char_dir / "profile.json"
                 md_path = char_dir / "profile.md"
                 raw_path = char_dir / "profile.raw.json"

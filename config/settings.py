@@ -78,6 +78,28 @@ class HookJudgeWeights(BaseModel):
         return self
 
 
+class StorySettingConfig(BaseModel):
+    """Story-level visual hints injected into character profile prompts.
+
+    Lets profile_builder stay story-agnostic: swap story = swap config only.
+    """
+
+    # Short description of the story setting/era used in LLM system prompts.
+    genre_hint: str = "modern urban ghost-hunter story"
+    # Default clothing direction for ordinary/young characters.
+    default_clothing_modern: str = "modern casual or tactical wear"
+    # Default clothing direction for elder/master/spirit characters.
+    default_clothing_traditional: str = "daoist robes or traditional attire"
+    # Tags the LLM must NOT emit (abstract / non-visual). Replaced with concrete
+    # visual equivalents downstream.
+    forbidden_visual_tags: List[str] = [
+        "mysterious aura", "mysterious", "scholar", "ethereal",
+        "spiritual energy", "exudes", "symbolizing", "enchanting",
+        "magical presence", "otherworldly", "ancient wisdom",
+        "cunning aura", "dangerous aura", "noble aura", "cold aura",
+    ]
+
+
 class RetentionConfig(BaseModel):
     """Attention-constraint system tunables (Phase 1+).
 
@@ -196,6 +218,9 @@ class Settings(BaseSettings):
 
     # Retention / attention-constraint system (Phase 1+)
     retention: RetentionConfig = RetentionConfig()
+
+    # Story-specific visual hints (used by character profile builder)
+    story_setting: StorySettingConfig = StorySettingConfig()
 
     @field_validator("total_chapters")
     @classmethod
