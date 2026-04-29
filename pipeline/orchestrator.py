@@ -850,7 +850,7 @@ def _generate_thumbnail(episode_num: int, shot, shot_idx: int) -> None:
     thumbnail_scene_prompt = _build_thumbnail_scene_prompt(shot.scene_prompt)
 
     comfyui_client.generate_image(
-        workflow_path="image_gen/workflows/thumbnail.json",
+        workflow_path="image_gen/workflows/thumbnail_flux.json",
         replacements={
             "SCENE_PROMPT": thumbnail_scene_prompt,
             "NEGATIVE_PROMPT": _THUMBNAIL_NEGATIVE,
