@@ -161,6 +161,45 @@ def main() -> int:
     out["violations_by_rule"] = dict(rule_counter)
     out["violations_by_severity"] = dict(severity_counter)
 
+    # Phase 6 calibration aid: scan hook candidates persisted by Phase 4 to
+    # detect if the rubric judge actually discriminates between candidates.
+    # Low stddev (< 0.05) across many episodes → judge is biased toward one
+    # score; raise temperature or revisit rubric prompt.
+    hook_dir = Path("data") / slug / "hook_candidates"
+    if hook_dir.exists():
+        winner_scores: List[float] = []
+        per_episode_stddev: List[float] = []
+        for path in sorted(hook_dir.glob("episode-*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            cands = payload.get("candidates") or []
+            scores = [
+                float(c.get("total_score", 0.0) or 0.0)
+                for c in cands
+                if isinstance(c, dict)
+            ]
+            if scores:
+                winner_scores.append(max(scores))
+                if len(scores) >= 2:
+                    per_episode_stddev.append(statistics.stdev(scores))
+        if winner_scores:
+            out["hook_judge"] = {
+                "episodes": len(winner_scores),
+                "winner_mean": round(statistics.mean(winner_scores), 3),
+                "winner_min": round(min(winner_scores), 3),
+                "candidate_score_stddev_mean": (
+                    round(statistics.mean(per_episode_stddev), 3)
+                    if per_episode_stddev
+                    else None
+                ),
+                "discrimination_ok": bool(
+                    per_episode_stddev
+                    and statistics.mean(per_episode_stddev) >= 0.05
+                ),
+            }
+
     out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[baseline] wrote {out_path}")
     print(f"  episodes={out['episodes_scanned']}  shots={out['shots_scanned']}")

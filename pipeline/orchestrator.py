@@ -15,6 +15,8 @@ from pipeline.vram_manager import VRAMConsumer, vram_manager
 
 if TYPE_CHECKING:
     from image_gen.comfyui_client import ComfyUIClient
+    from llm.gatekeeper import ReviewResult
+    from models.schemas import EpisodeScript
 
 PHASES = ["llm", "script_review", "images", "audio", "video", "validate"]
 
@@ -84,6 +86,21 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             episode_num,
         )
 
+    # Phase 2: viral-moment extraction runs BEFORE the model switch — it shares
+    # the summary LLM context to avoid an extra VRAM acquire. Behind feature flag.
+    viral_moments = None
+    if settings.retention.use_constraint_system:
+        from llm.hook_extractor import extract_viral_moments
+        logger.info("Extracting viral moments | episode={}", episode_num)
+        moments = extract_viral_moments(episode_num)
+        if moments:
+            viral_moments = moments
+        else:
+            logger.warning(
+                "Viral moment extraction returned empty; falling back to legacy hook | episode={}",
+                episode_num,
+            )
+
     # Evict summary model before loading script model to avoid VRAM pressure
     # when the two models are different (e.g. Gemma 4 → Mistral Small 3).
     if settings.effective_summary_model != settings.effective_script_model:
@@ -94,7 +111,7 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
         vram_manager.unload_model(settings.effective_summary_model)
 
     logger.info("Writing script | episode={}", episode_num)
-    write_episode_script(episode_num)
+    write_episode_script(episode_num, viral_moments=viral_moments)
 
     db.record_phase_done(episode_num, "llm")
     db.set_episode_status(episode_num, "SCRIPTED")
@@ -1118,27 +1135,110 @@ def run_video(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
 
 
 def run_script_review(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
-    """Phase: quality-review the generated script and auto-fix issues via LLM."""
-    from llm.script_reviewer import review_episode_script
+    """Phase: quality-review the generated script and auto-fix issues via LLM.
 
+    When `retention.use_constraint_system` is on, runs the gatekeeper reviewer
+    (constraint_validator → BLOCKING/WARNING tiers) with a bounded retry loop.
+    Otherwise, runs the legacy rule-based + LLM-fix reviewer.
+    """
     if dry_run:
         logger.info("[dry-run] Skipping script_review | episode={}", episode_num)
         db.set_episode_status(episode_num, "SCRIPT_REVIEWED")
         return
 
     db.record_phase_start(episode_num, "script_review")
-    _, report = review_episode_script(episode_num)
 
-    if report.fixed_shots:
-        logger.info(
-            "Script review fixed {} shot(s) | episode={} fixed={}",
-            len(report.fixed_shots), episode_num, report.fixed_shots,
-        )
+    if settings.retention.use_constraint_system:
+        _run_gatekeeper_review(episode_num)
     else:
-        logger.info("Script review complete — no rewrites needed | episode={}", episode_num)
+        from llm.script_reviewer import review_episode_script
+
+        _, report = review_episode_script(episode_num)
+
+        if report.fixed_shots:
+            logger.info(
+                "Script review fixed {} shot(s) | episode={} fixed={}",
+                len(report.fixed_shots), episode_num, report.fixed_shots,
+            )
+        else:
+            logger.info(
+                "Script review complete — no rewrites needed | episode={}",
+                episode_num,
+            )
 
     db.record_phase_done(episode_num, "script_review")
     db.set_episode_status(episode_num, "SCRIPT_REVIEWED")
+
+
+def _run_gatekeeper_review(episode_num: int) -> None:
+    """Phase 5: bounded-retry constraint reviewer.
+
+    1. Run gatekeeper → blocking + warnings.
+    2. If blocking and retries left → call regenerate_failed_shots, save, repeat.
+    3. After max retries OR pass → save violations to script + log JSONL + persist.
+    """
+    from llm.gatekeeper import gatekeeper_review, log_violations_jsonl
+    from llm.scriptwriter import (
+        load_episode_script,
+        regenerate_failed_shots,
+    )
+
+    script = load_episode_script(episode_num)
+    max_retries = settings.retention.reviewer_max_retries
+    known_chars = []  # gatekeeper computes proper-noun signals; chars optional
+
+    result = gatekeeper_review(script, known_chars=known_chars)
+    log_violations_jsonl(episode_num, result, attempt=0, final=(result.passed or max_retries == 0))
+
+    if result.passed:
+        logger.info("Gatekeeper PASS | episode={}", episode_num)
+        _persist_violations(script, result, episode_num)
+        return
+
+    logger.warning(
+        "Gatekeeper found {} BLOCKING + {} WARNING | episode={}\n{}",
+        len(result.blocking), len(result.warnings), episode_num, result.summary(),
+    )
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            script = regenerate_failed_shots(script, result.blocking, episode_num)
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "Regen failed | episode={} attempt={} err={}",
+                episode_num, attempt, e,
+            )
+            # Ensure audit trail has a final=True entry even when regen crashes.
+            log_violations_jsonl(episode_num, result, attempt=attempt, final=True)
+            break
+
+        result = gatekeeper_review(script, known_chars=known_chars)
+        final = result.passed or attempt == max_retries
+        log_violations_jsonl(episode_num, result, attempt=attempt, final=final)
+        if result.passed:
+            logger.info(
+                "Gatekeeper PASS after retry={} | episode={}", attempt, episode_num,
+            )
+            break
+        logger.warning(
+            "Gatekeeper still failing after retry={} | episode={} blocking={}",
+            attempt, episode_num, len(result.blocking),
+        )
+
+    # Graceful degrade: persist whatever we have. Pipeline continues even if
+    # blocking violations remain — Phase 6 calibration will tighten thresholds.
+    _persist_violations(script, result, episode_num)
+
+
+def _persist_violations(script: "EpisodeScript", result: "ReviewResult", episode_num: int) -> None:
+    """Save the (possibly regenerated) script + attach violation messages."""
+    from llm.scriptwriter import _save_script_after_review
+
+    script.constraint_violations = [
+        f"[{v.severity.value.upper()}] shot={v.shot_index} {v.rule}: {v.message}"
+        for v in result.all_violations
+    ]
+    _save_script_after_review(script, episode_num)
 
 
 def run_validate(episode_num: int, db: StateDB, dry_run: bool = False) -> None:

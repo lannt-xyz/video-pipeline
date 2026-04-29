@@ -297,6 +297,7 @@ class TestScriptwriter:
             mock_settings.llm_max_retries = 3
             mock_settings.target_duration_sec = 60
             mock_settings.shot_transition_duration = 0.3
+            mock_settings.retention.use_constraint_system = False
 
             script = write_episode_script(1)
 
@@ -342,6 +343,7 @@ class TestScriptwriter:
             mock_settings.llm_max_retries = 3
             mock_settings.target_duration_sec = 60
             mock_settings.shot_transition_duration = 0.3
+            mock_settings.retention.use_constraint_system = False
 
             script = write_episode_script(1)
 

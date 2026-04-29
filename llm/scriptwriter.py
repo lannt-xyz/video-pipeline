@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from loguru import logger
 from tenacity import RetryError, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -10,7 +10,11 @@ from config.settings import settings
 from llm.client import script_client as ollama_client
 from llm.client import scene_prompt_client
 from llm.summarizer import load_arc_overview
-from models.schemas import CameraFlow, EpisodeScript, ShotScript
+from models.schemas import CameraFlow, EpisodeScript, ShotScript, ViralMoment
+
+# Prompt version tag persisted on every EpisodeScript for DB / regression tracing.
+_PROMPT_VERSION_LEGACY = "v1"
+_PROMPT_VERSION_V2 = "v2-constraint"
 
 _SCRIPTWRITER_SYSTEM = """You are a Vietnamese short video scriptwriter for TikTok/YouTube Shorts.
 GENRE: HORROR / SUPERNATURAL / MYSTERY — this is a Maoshan exorcism story. Every shot must evoke dread, curiosity, or supernatural tension.
@@ -258,6 +262,84 @@ camera_flow MUST be one of: "wide_to_close", "close_to_wide", "pan_across", "det
 shot_subject MUST be one of: "person_action", "corpse_face", "wound", "bloody_object", "supernatural_entity", "ritual_object", "environment"."""
 
 
+# V2 prompt — rule-list format, paired with `constraint_validator.py` checks.
+# Behind `retention.use_constraint_system`. Legacy V1 (above) stays in code as
+# rollback path. Anti-pattern examples derive from episode-001-script.json
+# shots 0/3/4 (English hook, lore-dump exposition wall).
+_SCRIPTWRITER_SYSTEM_V2 = """You are a Vietnamese short-video scriptwriter for TikTok/YouTube Shorts.
+GENRE: Vietnamese supernatural-horror (Maoshan exorcism). Every shot must evoke dread, curiosity, or supernatural tension.
+
+You will receive ORDERED SCENES + (optionally) VIRAL MOMENT CANDIDATES.
+- ORDERED SCENES = the narrative spine. Cover them in chronological order.
+- VIRAL MOMENT CANDIDATES (if present) = bias for HOOK ONLY (shot 0) and at most 1-2 other shots. The rest stays faithful to ORDERED SCENES.
+
+Write EXACTLY 8 shots. Output JSON matching [OUTPUT CONTRACT] at the end.
+
+[NARRATION RULES] — hard limits, validated programmatically:
+1. LANGUAGE: Vietnamese only. No English words anywhere — including the hook. (Rule: hook_language)
+2. HOOK SHOT 0: ≤10 words. Open with a SPECIFIC visual action or shocking line. No setup, no character introduction.
+   ❌ "The stench of death filled the air..."  (English — REJECTED)
+   ❌ "Diệp Thiếu Dương bắt đầu hành trình tại Diệp gia thôn."  (setup — REJECTED)
+   ✅ "Hắn mở nắp quan tài… và thứ bên trong đang nhìn lại."
+3. PER SENTENCE: max 15 words. Split long sentences.
+4. EXPOSITION: max 2 expository sentences in a row across the entire script. (Rule: exposition_density)
+   Expository = definition style ("X là một loại Y..."), abstract noun + general statement, "Theo cổ thuật...", "Đó là...".
+   ❌ Two consecutive shots both lore-dumping — see anti-pattern below.
+5. BANNED OPENINGS for ANY sentence: "X là một loại", "Theo ", "Vì ", "Bởi ", "Do ", "Thật ra ", "Vốn dĩ ".
+6. SHOT 1 must contain at least 1 tension verb (nhìn, hét, chạy, đập, mở, lao, vung, đâm, chạm, ngã, rít, xé, túm, đẩy, kéo).
+7. CLIFFHANGER SHOT 7: cut mid-revelation or open question. No CTA, no "theo dõi tiếp", no resolution.
+
+[STRUCTURE RULES]:
+8. Exactly 8 shots. 2-3 must have `is_key_shot=true`.
+9. Shot 0-1 duration: 2 or 3 seconds. Shots 2-7: 6-10 seconds. No shot >12s.
+10. Episode total narration ≥ 200 words (after the hook is finalized).
+
+[LORE-CURIOSITY RULES]:
+11. Lore terms (Thi Du Cao, Mao Sơn pháp thuật, cổ thuật names — anything proper-noun that is NOT a character) may appear ONLY after at least 2 tension shots have set up curiosity.
+12. When a lore term DOES appear, frame it as CONSEQUENCE or MYSTERY, not definition.
+   ❌ "Thi Du Cao là một loại thi độc cổ xưa được dùng trong các nghi thức huyền bí."  (definition + abstract dump)
+   ✅ "Vết bầm trên cổ Thiếu Dương không phải bệnh — đó là dấu của Thi Du Cao."  (consequence, plants question)
+
+[VISUAL-NARRATION ALIGNMENT]:
+13. `scene_prompt` must visually depict the same action the narration describes. If narration says "hắn rút kiếm", scene_prompt cannot show a serene landscape.
+14. Foreground/midground/background layers required (see existing scene_prompt rules — those still apply).
+
+[CAMERA + SUBJECT]:
+15. `camera_flow` ∈ {"wide_to_close", "close_to_wide", "pan_across", "detail_reveal", "static_close", "static_wide"}.
+    - Hook (shot 0): "static_close" or "detail_reveal"
+    - Twist/revelation: "close_to_wide"
+    - Horror discovery / clue: "detail_reveal"
+    - Action/fight: "pan_across"
+16. `shot_subject` ∈ {"person_action", "corpse_face", "wound", "bloody_object", "supernatural_entity", "ritual_object", "environment"}.
+    Choose deliberately — non-person subjects (corpse_face, wound, bloody_object) are SHOCK levers; use them on at least 1-2 shots.
+
+[OUTPUT CONTRACT] — return ONLY this JSON, nothing else:
+{
+  "title": "string — episode title in Vietnamese",
+  "shots": [
+    {
+      "scene_prompt": "string (English — descriptive phrase list with foreground/midground/background)",
+      "narration_text": "string (Vietnamese)",
+      "duration_sec": 6,
+      "is_key_shot": false,
+      "characters": ["Tên Nhân Vật"],
+      "camera_flow": "wide_to_close",
+      "scene_id": "location_slug",
+      "shot_subject": "person_action"
+    }
+  ]
+}
+shots length MUST be 8.
+
+[ANTI-PATTERN — DO NOT EMIT]:
+❌ Shot A: "Thi Du Cao là một loại thi độc cổ xưa..."
+❌ Shot A+1: "Theo cổ thuật, nó được dùng trong các nghi thức huyền bí..."
+   (Both expository, back-to-back — violates rule 4 + 5 + 12.)
+✅ Shot A: "Hắn lùi lại — vết bầm trên cổ thằng bé chuyển sang đen."
+✅ Shot A+1: "Tôi nhận ra đó là dấu của Thi Du Cao. Đã quá muộn."
+   (Action → consequence-framed lore. Curiosity preserved.)"""
+
+
 _HOOK_SYSTEM = """You are a Vietnamese short video scriptwriter for TikTok/YouTube Shorts.
 Write EXACTLY 1 hook shot that opens an episode.
 
@@ -359,8 +441,14 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
         "replaced by a 10-word hook downstream) MUST be AT LEAST 200 words. "
         "Aim for 220+ total words across all shots so the script survives the hook swap."
     )
+    # Phase 3: switch system prompt based on feature flag.
+    system_prompt = (
+        _SCRIPTWRITER_SYSTEM_V2
+        if settings.retention.use_constraint_system
+        else _SCRIPTWRITER_SYSTEM
+    )
     result = ollama_client.generate_json(
-        prompt=prompt, system=_SCRIPTWRITER_SYSTEM, temperature=0.7
+        prompt=prompt, system=system_prompt, temperature=0.7
     )
     # Reject and retry if total narration is severely short (LLM output is broken/empty).
     # Threshold 80 catches truly degenerate outputs while allowing the model to produce
@@ -808,6 +896,19 @@ def _synthesize_scene_prompt(brief: "ShotVisualBrief", shot: ShotScript) -> str:
         subject_key, ("", "")
     )
     non_person_subject = subject_key not in ("person_action", "environment")
+
+    # Phase 3: focal-point cap (constraint system). Keep subjects + key_objects
+    # ≤ 2 total. Drop key_objects first (subjects carry the character anchor
+    # used by character_gen IPAdapter). If subjects alone > 2, keep first 2.
+    # Mutates a local copy so the caller's brief is untouched.
+    if settings.retention.use_constraint_system:
+        capped_subjects = list(brief.subjects[:2])
+        keep_objects = max(0, 2 - len(capped_subjects))
+        capped_objects = list(brief.key_objects[:keep_objects])
+        if capped_subjects != list(brief.subjects) or capped_objects != list(brief.key_objects):
+            brief = brief.model_copy(
+                update={"subjects": capped_subjects, "key_objects": capped_objects}
+            )
 
     # Resolve composition: subject-forced > brief.composition > camera_flow mapping.
     composition = forced_composition or brief.composition.strip()
@@ -1384,10 +1485,17 @@ def _build_characters_ref(arc_char_names: List[str]) -> str:
     return ", ".join(parts)
 
 
-def write_episode_script(episode_num: int) -> EpisodeScript:
+def write_episode_script(
+    episode_num: int,
+    viral_moments: Optional[List[ViralMoment]] = None,
+) -> EpisodeScript:
     """Generate shot script. Caps at _MAX_SHOTS_PER_EPISODE; excess saved as carry-over.
     First checks carry-over from previous episode before calling LLM.
     Always generates a fresh hook shot (shot 0) regardless of carry-over state.
+
+    `viral_moments` (optional, behind `retention.use_constraint_system` flag) are
+    appended to the arc context as hook bias. When None, behavior is identical to
+    legacy (faithful summary-driven script).
     """
     # Build arc_text upfront — needed for both LLM path and carryover hook regeneration
     arc = load_arc_overview(episode_num)
@@ -1416,6 +1524,20 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
             f"Summary: {arc.arc_summary}\n\n"
             f"ORDERED SCENES:\n{arc_event_text}"
             + f"\n\nCharacters: {chars_ref}"
+        )
+
+    # Phase 2: append viral-moment hook bias when constraint system is enabled.
+    # Narrative spine still comes from arc_text above; this is hook + key-shot bias only.
+    if viral_moments:
+        moments_text = "\n".join(
+            f"- [shock] {m.description}  (mystery: {m.mystery_seed})"
+            for m in viral_moments[:5]
+        )
+        arc_text = (
+            arc_text
+            + "\n\nVIRAL MOMENT CANDIDATES (use ONLY for hook shot 0 + at most 1-2 key shots; "
+            "keep the rest of the script faithful to the ordered scenes above):\n"
+            + moments_text
         )
 
     # 1. Load carry-over from previous episode
@@ -1454,14 +1576,58 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
             episode_num, len(leftover), episode_num + 1,
         )
 
-    # 4. Always force-regenerate shot 0 as a fresh hook for this episode
+    # 4. Always force-regenerate shot 0 as a fresh hook for this episode.
+    # Phase 4: when constraint system is on, run competitive selection (3 candidates
+    # → judge → pick best) instead of a single LLM call. Falls back to legacy on
+    # hard failure so we never lose the hook entirely.
     logger.info("Generating hook shot | episode={}", episode_num)
-    try:
-        hook_shot = _generate_hook_shot(arc_text, episode_num)
+    hook_shot: Optional[ShotScript] = None
+    selected_hook_strength: Optional[float] = None
+    if settings.retention.use_constraint_system:
+        try:
+            from llm.hook_judge import select_hook
+            result = select_hook(arc_text, episode_num)
+            if result is not None:
+                winner, _all = result
+                hook_shot = ShotScript(
+                    scene_prompt=winner.visual_seed or "close-up shot",
+                    narration_text=winner.text,
+                    duration_sec=3.0,
+                    is_key_shot=False,
+                    characters=[],
+                    camera_flow=CameraFlow.STATIC_CLOSE,
+                )
+                selected_hook_strength = winner.total_score
+                logger.info(
+                    "Competitive hook selected | episode={} score={:.3f} text={!r}",
+                    episode_num, winner.total_score, winner.text,
+                )
+            else:
+                logger.warning(
+                    "Competitive hook returned no winner; falling back to legacy | episode={}",
+                    episode_num,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Competitive hook failed, falling back to legacy | episode={} err={}",
+                episode_num, e,
+            )
+
+    if hook_shot is None:
+        try:
+            hook_shot = _generate_hook_shot(arc_text, episode_num)
+        except Exception:
+            logger.warning(
+                "Hook shot generation failed, keeping carry-over shot 0 | episode={}",
+                episode_num,
+            )
+
+    if hook_shot is not None:
         episode_shots[0] = hook_shot
-        logger.debug("Hook shot injected | episode={} narration={!r}", episode_num, hook_shot.narration_text)
-    except Exception:
-        logger.warning("Hook shot generation failed, keeping carry-over shot 0 | episode={}", episode_num)
+        logger.debug(
+            "Hook shot injected | episode={} narration={!r}",
+            episode_num, hook_shot.narration_text,
+        )
 
     # 5. Normalize in correct order — all on episode_shots (not new_shots)
     episode_shots = _normalize_duration(episode_shots, episode_num)
@@ -1517,6 +1683,20 @@ def write_episode_script(episode_num: int) -> EpisodeScript:
         title=raw_title,
         shots=episode_shots,
     )
+
+    # Phase 3: populate constraint signals (energy_level, exposition_ratio,
+    # proper_nouns) when feature flag is on. Validator runs at script_review
+    # phase; here we just compute the per-shot signals so they persist to JSON.
+    if settings.retention.use_constraint_system:
+        from llm.constraint_validator import populate_shot_signals
+        known_chars = list(arc.characters_in_episode or [])
+        for shot in script.shots:
+            populate_shot_signals(shot, known_chars)
+        script.prompt_version = _PROMPT_VERSION_V2
+        if selected_hook_strength is not None:
+            script.hook_strength = selected_hook_strength
+    else:
+        script.prompt_version = _PROMPT_VERSION_LEGACY
 
     script_path = (
         Path(settings.data_dir)
@@ -1934,3 +2114,123 @@ def _align_scene_prompt_with_narration(
             aligned,
         )
     return updated
+
+
+# ── Phase 5: Targeted shot regeneration for gatekeeper retry ────────────────
+
+_REGEN_SYSTEM = """You are a Vietnamese supernatural-horror Shorts scriptwriter rewriting failing shots.
+
+You will receive a list of shots that violated retention constraints. For EACH shot:
+- Rewrite `narration_text` (Vietnamese, first-person "Tôi...") to be MORE TENSE and MORE MYSTERIOUS — do not just "fix" the violation, IMPROVE the storytelling.
+- Keep the same key event / character context.
+- AVOID repeating the violation pattern (described in `violations`).
+
+Specific anti-patterns by violation code:
+- hook_language: hook MUST be Vietnamese with diacritics. Maximum 10 words.
+- exposition_density: too much backstory/lore. Replace with concrete sensory detail (sound, sight, touch).
+- lore_before_curiosity: this shot dumps lore before the audience asks. Plant a question instead.
+
+OUTPUT — JSON array, one object per input shot, same order:
+[{"shot_index": <int>, "narration_text": "<Vietnamese>", "scene_prompt": "<English tags>"}]
+Return ONLY the JSON array."""
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(min=2, max=10),
+    retry=retry_if_exception_type((json.JSONDecodeError, ValueError)),
+)
+def regenerate_failed_shots(
+    script: EpisodeScript,
+    blocking_violations: List,  # List[Violation] — avoid circular import
+    episode_num: int,
+) -> EpisodeScript:
+    """Rewrite shots flagged by the gatekeeper. Returns a new EpisodeScript.
+
+    Only shots with at least one BLOCKING violation are sent to the LLM.
+    Other shots are preserved verbatim.
+    """
+    # Group violations by shot index. Episode-level (-1) violations are skipped here.
+    by_shot: dict = {}
+    for v in blocking_violations:
+        if getattr(v, "shot_index", -1) >= 0:
+            by_shot.setdefault(v.shot_index, []).append(v)
+
+    if not by_shot:
+        return script
+
+    payload = []
+    for idx in sorted(by_shot.keys()):
+        if idx >= len(script.shots):
+            continue
+        shot = script.shots[idx]
+        payload.append({
+            "shot_index": idx,
+            "violations": [
+                {"rule": v.rule, "msg": v.message} for v in by_shot[idx]
+            ],
+            "narration_text": shot.narration_text,
+            "scene_prompt": shot.scene_prompt,
+        })
+
+    if not payload:
+        return script
+
+    prompt = (
+        f"Episode {episode_num}: rewrite the following {len(payload)} failing shot(s).\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+    logger.info(
+        "Regenerating {} shot(s) via gatekeeper retry | episode={} indices={}",
+        len(payload), episode_num, sorted(by_shot.keys()),
+    )
+
+    result = ollama_client.generate_json(prompt=prompt, system=_REGEN_SYSTEM, temperature=0.7)
+    if not isinstance(result, list):
+        raise ValueError(f"regen LLM returned non-list: {type(result)}")
+
+    fixes_by_index: dict = {}
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        try:
+            idx = int(item.get("shot_index", -1))
+        except (TypeError, ValueError):
+            continue
+        if idx < 0 or idx >= len(script.shots):
+            continue
+        narration = str(item.get("narration_text", "") or "").strip()
+        scene_prompt = str(item.get("scene_prompt", "") or "").strip()
+        if not narration:
+            continue
+        fixes_by_index[idx] = {
+            "narration_text": narration,
+            "scene_prompt": scene_prompt or script.shots[idx].scene_prompt,
+        }
+
+    if not fixes_by_index:
+        raise ValueError("regen LLM returned no usable fixes")
+
+    new_shots = []
+    for i, shot in enumerate(script.shots):
+        if i in fixes_by_index:
+            new_shots.append(shot.model_copy(update=fixes_by_index[i]))
+        else:
+            new_shots.append(shot)
+
+    return script.model_copy(update={"shots": new_shots})
+
+
+def _save_script_after_review(script: EpisodeScript, episode_num: int) -> None:
+    """Persist a script after gatekeeper review (with constraint_violations attached)."""
+    script_path = (
+        Path(settings.data_dir)
+        / "scripts"
+        / f"episode-{episode_num:03d}-script.json"
+    )
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(script.model_dump_json(indent=2), encoding="utf-8")
+    logger.info(
+        "Script persisted post-review | episode={} violations={}",
+        episode_num, len(script.constraint_violations),
+    )

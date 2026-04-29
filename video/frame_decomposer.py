@@ -1,7 +1,7 @@
 from typing import List
 
 from config.settings import settings
-from models.schemas import CameraFlow, FrameScript, MotionDirection, ShotScript
+from models.schemas import CameraFlow, EnergyLevel, FrameScript, MotionDirection, ShotScript
 
 # Minimum shot duration (seconds) to warrant multi-frame crossfade.
 # Hook shots (≤3s) are too short — crossfade would eat most of the clip.
@@ -174,6 +174,20 @@ def decompose_shot(shot: ShotScript) -> List[FrameScript]:
     the corresponding frame so the image visually matches the narration timeline.
     """
     flow_configs = _FLOW_FRAMES.get(shot.camera_flow, _FLOW_FRAMES[CameraFlow.WIDE_TO_CLOSE])
+
+    # Phase 3: SHOCK shots must lead with a close-up regardless of camera_flow.
+    # Override frame 0 to a close-up tag while preserving frame N-1 / motion. Behind
+    # feature flag so legacy behavior is untouched when constraint system is off.
+    if (
+        settings.retention.use_constraint_system
+        and shot.energy_level == EnergyLevel.SHOCK
+        and flow_configs
+    ):
+        first = flow_configs[0]
+        first_tag = first[0] if isinstance(first, tuple) else ""
+        if "close" not in first_tag.lower():
+            shock_tag = ("extreme close-up, ", MotionDirection.ZOOM_IN)
+            flow_configs = [shock_tag] + list(flow_configs[1:])
 
     # Short shots or single-frame flows: only use the first frame config
     if shot.duration_sec < _MIN_DURATION_FOR_MULTI_FRAME or len(flow_configs) == 1:

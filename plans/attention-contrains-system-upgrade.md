@@ -3,11 +3,11 @@
 > **Implementation status (live):**
 > - [x] **Phase 1a** — Schema + Config (PR1)
 > - [x] **Phase 1b** — Validator + Baseline (PR2) — 19/19 tests pass; baseline empty until first script run
-> - [ ] Phase 2 — Hook Extraction stage (PR3)
-> - [ ] Phase 3 — Scriptwriter V2 behind flag (PR4)
-> - [ ] Phase 4 — Gatekeeper Reviewer + retry loop (PR4)
-> - [ ] Phase 5 — Frame decomposer energy-aware (PR5)
-> - [ ] Phase 6 — Calibration + flip flag (PR6)
+> - [x] **Phase 2** — Hook Extraction stage (PR3) — `llm/hook_extractor.py` + orchestrator wiring + scriptwriter `viral_moments` param; 10/10 tests pass; behind `retention.use_constraint_system` flag
+> - [x] **Phase 3** — Scriptwriter V2 + visual constraint (PR4 part 1) — `_SCRIPTWRITER_SYSTEM_V2` rule-list prompt; flag-based switch in `_write_raw`; `populate_shot_signals` after script generation; `prompt_version` tag; focal-point cap (≤2) in `_synthesize_scene_prompt`; SHOCK→close-up override in `decompose_shot`. All behind flag; 29/29 tests pass.
+> - [x] **Phase 4** — Hook competitive selection (PR4 part 2) — `llm/hook_judge.py` (3 candidates → language pre-filter → rubric judge → weighted score → 1 retry on weak winner); persists to `data/{slug}/hook_candidates/episode-NNN.json`; integrated into `write_episode_script` behind flag with legacy fallback. 8 new tests, 37/37 total pass.
+> - [x] **Phase 5** — Gatekeeper Reviewer + retry loop (PR5) — `llm/gatekeeper.py` (pure judge: BLOCKING/WARNING tiers using `constraint_validator`); `regenerate_failed_shots` in scriptwriter (anti-bias rewrite prompt); orchestrator `_run_gatekeeper_review` with bounded retry (`reviewer_max_retries`); JSONL audit log to `logs/retention_violations.jsonl`; graceful degrade. 4 new tests, 41/41 phase tests pass.
+> - [~] **Phase 6** — Calibration + flip flag (PR6) — infrastructure ready: `retention_report.py` extended với hook score variance check (`discrimination_ok` if stddev ≥ 0.05). **Manual steps remaining (require real batch run):** (a) flip `use_constraint_system: true` on a 10-episode sample; (b) hand-rate hooks; (c) tune `hook_min_score`, `max_exposition_ratio`, `hook_judge_weights` based on report; (d) write ADR; (e) flip flag for full batch.
 
 Chuyển toàn bộ retention logic từ "style guidance" sang **hard constraint system** có schema, có gatekeeper, có bounded retry. Không refactor pipeline architecture (orchestrator giữ nguyên), chỉ nâng cấp 4 stage hiện có + thêm 1 micro-stage hook scoring + thêm structured fields trong schema để enforce được.
 
