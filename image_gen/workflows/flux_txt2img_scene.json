@@ -43,7 +43,7 @@
   "6": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__. Photorealistic cinematic film still, live-action movie frame, realistic skin texture and pores, natural film grain, shot on 35mm anamorphic lens, shallow depth of field, volumetric atmosphere, traditional Chinese rural setting, East Asian visual aesthetic. Style: NOT anime, NOT manga, NOT cartoon, NOT illustration, NOT painting, NOT drawing, NOT 3d render, NOT cgi, NOT cel shading, NOT toon shading, NOT comic book, NOT line art, NOT digital art.",
+      "text": "Photorealistic cinematic film still from a live-action wuxia movie, shot on 35mm anamorphic film, Kodak Vision3 500T, natural film grain, realistic human skin with visible pores and subsurface scattering, practical on-set lighting, shallow depth of field, volumetric atmospheric haze, traditional Chinese rural production design, East Asian cast. __SCENE_PROMPT__.",
       "clip": ["2", 0]
     }
   },

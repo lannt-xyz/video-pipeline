@@ -195,26 +195,34 @@ _FLUX_UNFRIENDLY_DESC_TAGS = frozenset([
 
 
 def _build_character_appearance_tags(char_anchor_pairs: list) -> str:
-    """Build inline character appearance tags for the Flux prompt.
+    """Build inline character appearance description for the Flux prompt.
 
-    For each character (max 2), keeps physical-identity tags (hair, eyes, face,
-    body) and clothing tags from `Character.description`, drops Pony/Danbooru
+    Flux uses T5-XXL which understands natural-language sentences much better
+    than danbooru-style comma-soup tag lists. We emit a short prose sentence
+    per character (max 2) listing identity tags (hair / eyes / face / body) and
+    clothing tags pulled from `Character.description`, dropping Pony/Danbooru
     noise (score_X, 1boy, solo, looking at viewer, ...) and scene-dependent
-    tags (expression, background) so Flux gets only stable identity hints.
+    tags (expression, background).
 
-    The combined block is wrapped with a light weight (:1.05) so it nudges
-    Flux toward consistency without overriding scene composition.
+    Important: we do NOT use A1111-style weight syntax like `(...:1.05)` —
+    Flux/T5 ignores those and the literal parentheses become noise tokens.
+    Identity strength comes from being placed early in the prompt instead.
 
     Returns "" when there are no usable tags so callers can skip the section.
     """
     if not char_anchor_pairs:
         return ""
 
-    kept: list[str] = []
-    seen: set[str] = set()
+    sentences: list[str] = []
+
     for char_obj, _ in char_anchor_pairs[:2]:
         if not char_obj or not char_obj.description:
             continue
+
+        identity_tags: list[str] = []
+        clothing_tags: list[str] = []
+        seen_local: set[str] = set()
+
         for raw in char_obj.description.split(","):
             tag = raw.strip()
             if not tag:
@@ -222,22 +230,44 @@ def _build_character_appearance_tags(char_anchor_pairs: list) -> str:
             tag_lower = tag.lower()
             if tag_lower in _FLUX_UNFRIENDLY_DESC_TAGS:
                 continue
-            # Skip generic *expression tags — scene_prompt drives expression.
             if tag_lower.endswith(" expression"):
                 continue
-            if tag_lower in seen:
+            if tag_lower in seen_local:
                 continue
-            seen.add(tag_lower)
-            kept.append(tag)
+            seen_local.add(tag_lower)
 
-    if not kept:
+            if any(kw in tag_lower for kw in _CLOTHING_KEYWORDS):
+                clothing_tags.append(tag)
+            else:
+                identity_tags.append(tag)
+
+        if not identity_tags and not clothing_tags:
+            continue
+
+        # Cap each list to keep overall prompt length sane.
+        identity_tags = identity_tags[:8]
+        clothing_tags = clothing_tags[:6]
+
+        gender_word = "woman" if (char_obj.gender or "").lower() == "female" else "man"
+        name = (char_obj.name or "").strip()
+
+        parts: list[str] = []
+        subject = f"{name}, an East Asian {gender_word}" if name else f"an East Asian {gender_word}"
+        if identity_tags:
+            parts.append(f"{subject} with {', '.join(identity_tags)}")
+        else:
+            parts.append(subject)
+        if clothing_tags:
+            parts.append(f"wearing {', '.join(clothing_tags)}")
+
+        sentences.append(", ".join(parts))
+
+    if not sentences:
         return ""
 
-    # Light weight — strong enough to nudge identity, weak enough not to
-    # override scene action / framing. Cap at 14 tags to leave budget for
-    # scene_prompt and gender_tags inside the 30-tag overall limit.
-    appearance = ", ".join(kept[:14])
-    return f"({appearance}:1.05)"
+    if len(sentences) == 1:
+        return f"The shot features {sentences[0]}."
+    return f"The shot features {sentences[0]}; alongside {sentences[1]}."
 
 
 _SCENE_DETAIL_BOOST_TAGS = (
@@ -773,10 +803,12 @@ def _build_shot_image_params(
     # Inject stable character appearance (hair/eyes/face/clothing) from the
     # character DB. Without IPAdapter (disabled for Flux), this is the only
     # mechanism keeping the same character looking consistent shot-to-shot.
-    # Placed AFTER gender_tags so identity tags follow the count tag for CLIP.
+    # IMPORTANT: placed at the FRONT so Flux/T5 attends to identity strongly
+    # before reading the scene description. Natural-language sentence (not
+    # tag-soup) because T5 understands prose better.
     appearance_tags = _build_character_appearance_tags(char_anchor_pairs)
     if appearance_tags:
-        scene_prompt_parts.append(appearance_tags)
+        scene_prompt_parts.insert(0, appearance_tags)
 
     # Prepend wide-framing tags for pure environment shots (no character, no shock close-up)
     if not char_anchor_pairs and not wants_closeup:
@@ -784,9 +816,10 @@ def _build_shot_image_params(
             scene_prompt_parts.insert(0, _SCENE_FRAMING_TAGS)
 
     replacements: dict = {
-        # Bumped from 24 → 30 to fit injected character appearance tags without
-        # crowding out scene_prompt content.
-        "SCENE_PROMPT": _compact_prompt_tags(", ".join(scene_prompt_parts), max_tags=30),
+        # Bumped from 30 → 40 because the natural-language character appearance
+        # sentence consumes ~8-12 comma-separated chunks but is still one logical
+        # block. We don't want it crowding out scene_prompt or gender_tags.
+        "SCENE_PROMPT": _compact_prompt_tags(", ".join(scene_prompt_parts), max_tags=40),
         "SEED": seed,
         "WIDTH": settings.image_width,
         "HEIGHT": settings.image_height,
@@ -1547,14 +1580,56 @@ def probe_images(episode_num: int, gen_shots: int = 0) -> None:
     print(f"\n{BOLD}Probe complete.{RESET} Open {probe_dir} to review.\n")
 
 
+def _parse_episode_specs(specs: list[str]) -> list[int]:
+    """Expand CLI episode specs into a deduped, ordered list of episode numbers.
+
+    Accepts integers and inclusive ranges:
+        ["1"]              -> [1]
+        ["1", "2", "5"]    -> [1, 2, 5]
+        ["1-3"]            -> [1, 2, 3]
+        ["1", "3-5", "8"]  -> [1, 3, 4, 5, 8]
+    """
+    seen: set[int] = set()
+    result: list[int] = []
+    for raw in specs:
+        token = raw.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_s, _, end_s = token.partition("-")
+            try:
+                start, end = int(start_s), int(end_s)
+            except ValueError as exc:
+                raise SystemExit(f"Invalid episode range: {token!r}") from exc
+            if start > end:
+                raise SystemExit(f"Invalid episode range (start > end): {token!r}")
+            nums = range(start, end + 1)
+        else:
+            try:
+                nums = [int(token)]
+            except ValueError as exc:
+                raise SystemExit(f"Invalid episode number: {token!r}") from exc
+        for n in nums:
+            if n < 1:
+                raise SystemExit(f"Episode number must be >= 1, got {n}")
+            if n not in seen:
+                seen.add(n)
+                result.append(n)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Video Production Pipeline",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
-        "--episode", type=int, metavar="N",
-        help="Run a single episode N end-to-end (or from --from-phase)",
+        "--episode", type=str, nargs="+", metavar="N",
+        help=(
+            "Run one or more specific episodes (skips episodes not listed).\n"
+            "Accepts: single (--episode 1), multiple (--episode 1 2 5),\n"
+            "ranges (--episode 1-3), or mix (--episode 1 3-5 8)."
+        ),
     )
     parser.add_argument(
         "--from-episode", type=int, default=1, metavar="N",
@@ -1589,7 +1664,11 @@ def main() -> None:
         setup_logging(args.probe_images)
         probe_images(args.probe_images, gen_shots=args.probe_shots)
     elif args.episode:
-        run_episode(args.episode, from_phase=args.from_phase, dry_run=args.dry_run)
+        episodes = _parse_episode_specs(args.episode)
+        if not episodes:
+            parser.error("--episode produced an empty episode list")
+        for ep in episodes:
+            run_episode(ep, from_phase=args.from_phase, dry_run=args.dry_run)
     else:
         run_pipeline(
             from_episode=args.from_episode,
