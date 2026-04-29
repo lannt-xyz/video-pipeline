@@ -43,7 +43,7 @@
   "6": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__",
+      "text": "__SCENE_PROMPT__. Photorealistic cinematic film still, live-action movie poster, realistic skin texture, bright key light, vivid color grading, shot on 35mm. Style: NOT anime, NOT manga, NOT cartoon, NOT illustration, NOT painting, NOT 3d render, NOT cgi, NOT cel shading, NOT digital art.",
       "clip": ["2", 0]
     }
   },
