@@ -66,12 +66,22 @@ def _create_zoompan_clip(
         .filter("zoompan", **zp)
         .filter("setpts", "PTS-STARTPTS")
     )
-    audio = ffmpeg.input(str(audio_path))
+    # Force audio stream length == clip duration. Without this, short narration
+    # leaves audio_stream_len < video_stream_len in the container, and downstream
+    # acrossfade chains drift (next shot's audio starts fading in early). apad
+    # inserts trailing silence; atrim caps to exact `duration`.
+    audio = (
+        ffmpeg.input(str(audio_path))
+        .audio
+        .filter("apad")
+        .filter("atrim", duration=duration)
+        .filter("asetpts", "PTS-STARTPTS")
+    )
 
     try:
         ffmpeg.output(
             video,
-            audio.audio,
+            audio,
             str(output_path),
             vcodec="h264_nvenc",
             acodec="aac",
@@ -127,6 +137,14 @@ def _create_multiframe_clip(
     total_frames_per = int(frame_video_dur * fps)
 
     audio_in = ffmpeg.input(str(audio_path))
+    # Pad/trim audio to exact `duration` so this clip's audio_stream_len ==
+    # video_stream_len. Prevents drift in episode-level acrossfade chain.
+    audio_padded = (
+        audio_in.audio
+        .filter("apad")
+        .filter("atrim", duration=duration)
+        .filter("asetpts", "PTS-STARTPTS")
+    )
 
     prepared_streams = []
     for img, frame in zip(frame_images[:n_frames], frames[:n_frames]):
@@ -156,7 +174,7 @@ def _create_multiframe_clip(
     try:
         ffmpeg.output(
             merged,
-            audio_in.audio,
+            audio_padded,
             str(output_path),
             vcodec="h264_nvenc",
             acodec="aac",
@@ -205,13 +223,21 @@ def _create_svd_clip(
         )
 
         pts_factor = shot.duration_sec / 4.2
-        audio = ffmpeg.input(str(audio_path))
+        # Pad/trim audio to exact shot duration to keep audio_stream_len ==
+        # video_stream_len. Prevents drift in episode-level acrossfade chain.
+        audio = (
+            ffmpeg.input(str(audio_path))
+            .audio
+            .filter("apad")
+            .filter("atrim", duration=shot.duration_sec)
+            .filter("asetpts", "PTS-STARTPTS")
+        )
 
         (
             ffmpeg.input(str(svd_raw))
             .filter("setpts", f"{pts_factor:.4f}*PTS")
             .output(
-                audio.audio,
+                audio,
                 str(output_path),
                 vcodec="h264_nvenc",
                 acodec="aac",
