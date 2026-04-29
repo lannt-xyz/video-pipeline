@@ -279,6 +279,13 @@ Return JSON:
 { "scene_prompt": "string", "narration_text": "string", "duration_sec": 3, "is_key_shot": false, "characters": ["Tên Nhân Vật"], "camera_flow": "static_close", "shot_subject": "corpse_face" }"""
 
 
+# Hook narration is capped at 10 words by `_HOOK_SYSTEM`. Used by `_write_raw`
+# to validate the post-hook total — original shot 0 word count is replaced by
+# this budget when computing whether the final assembled script will pass the
+# 200-word floor.
+_HOOK_WORD_BUDGET = 10
+
+
 def _coerce_shot_item(item: object, episode_num: int, index: int) -> dict | None:
     """Coerce a single shot item from Ollama output into a plain dict.
 
@@ -348,8 +355,9 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
         "Remember: 8-10 shots, EXACTLY 2-3 with is_key_shot=true, "
         "scene_prompt in English, narration_text in Vietnamese.\n"
         "CRITICAL: shots 3-8 MUST each have 28-40 words in narration_text. "
-        "Total narration_text across all shots MUST be AT LEAST 210 words "
-        "(below this the script WILL be rejected)."
+        "Total narration_text across SHOTS 2..N (excluding shot 1, which will be "
+        "replaced by a 10-word hook downstream) MUST be AT LEAST 200 words. "
+        "Aim for 220+ total words across all shots so the script survives the hook swap."
     )
     result = ollama_client.generate_json(
         prompt=prompt, system=_SCRIPTWRITER_SYSTEM, temperature=0.7
@@ -385,11 +393,17 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
             return ""
 
         total_words = sum(len(_narration_of(s).split()) for s in shots)
+        # Shot 0 will be REPLACED by _generate_hook_shot() (≤10 words by design).
+        # Validate the post-hook total instead of raw total, otherwise scripts
+        # whose original shot 0 was long enough to mask thin shots 1+ pass here
+        # but fail the downstream hard gate after the hook swap.
+        shot0_words = len(_narration_of(shots[0]).split()) if shots else 0
+        effective_total = total_words - shot0_words + _HOOK_WORD_BUDGET
         # Vietnamese edge-tts (vi-VN-HoaiMyNeural) clocks ~3.5 wps empirically.
         # Validator requires final video ≥57s, so we need ≥57*3.5 ≈ 200 words.
         # Use 200 as hard floor; below this TTS undershoots and validation fails.
         min_total = 200
-        if total_words < min_total:
+        if effective_total < min_total:
             # Identify short shots for diagnostics
             short_shots = []
             for idx, s in enumerate(shots):
@@ -397,17 +411,17 @@ def _write_raw(arc_text: str, episode_num: int) -> dict:
                 if idx >= 2 and w < 20:
                     short_shots.append(f"shot{idx+1}={w}w")
             logger.warning(
-                "Script rejected: total_words={} < {}, retrying | episode={} short_shots={}",
-                total_words, min_total, episode_num, short_shots or "none",
+                "Script rejected: post-hook total_words={} (raw={}) < {}, retrying | episode={} short_shots={}",
+                effective_total, total_words, min_total, episode_num, short_shots or "none",
             )
             raise ValueError(
-                f"narration too short: {total_words} words < {min_total}; "
-                f"short_shots={short_shots}"
+                f"narration too short post-hook: {effective_total} words < {min_total}; "
+                f"raw={total_words}, shot0={shot0_words}, short_shots={short_shots}"
             )
-        if total_words < 210:
+        if effective_total < 210:
             logger.warning(
-                "Script accepted but narration is tight: total_words={} < 210 | episode={}",
-                total_words, episode_num,
+                "Script accepted but narration is tight: post-hook total_words={} < 210 | episode={}",
+                effective_total, episode_num,
             )
     return result
 
@@ -481,7 +495,9 @@ _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"máu|vết máu|đẫm máu", re.IGNORECASE), "dark blood stain on surface"),
     (re.compile(r"xương|bộ xương|sọ người", re.IGNORECASE), "scattered bones on ground"),
     (re.compile(r"thi thể|xác chết|\bxác\b|thây|tử thi|nữ tử thi", re.IGNORECASE), "pale lifeless corpse with rigid limbs"),
-    (re.compile(r"mộ|ngôi mộ|mồ", re.IGNORECASE), "chinese earthen grave mound with carved stone stele"),
+    # NOTE: do NOT use bare `mồ` — it matches "mồ hôi" (sweat), "mồ côi" (orphan).
+    # Require explicit grave-related compounds only.
+    (re.compile(r"\bmộ\b|ngôi mộ|phần mộ|nấm mồ|mồ mả|mộ phần|đào mộ|khai quật mộ", re.IGNORECASE), "chinese earthen grave mound with carved stone stele"),
     (re.compile(r"nến|đèn cầy", re.IGNORECASE), "dripping wax candle with flickering flame"),
     (re.compile(r"trắng bệch|trắng nhợt|xanh xao|tái mét", re.IGNORECASE), "parchment-dry pale skin with blue-grey veins visible through translucent dermis"),
     (re.compile(r"trợn trừng|mắt mở to|mắt trợn", re.IGNORECASE), "wide staring dead eyes with dilated pupils"),
@@ -652,20 +668,21 @@ FIELDS TO EXTRACT:
   GOOD: ["weathered red lacquer coffin", "corroded iron crowbar", "yellow paper talisman with visible fibers", "coarse hemp burial cloth"]
   BAD (no texture):  ["red coffin", "iron crowbar", "talisman", "white cloth"]
   Texture vocabulary to draw from: weathered, corroded, oxidized, charred, parchment-dry, viscous, blood-soaked, lacquered, rotted, splintered, moss-covered, dust-caked, frost-rimed, soot-stained.
-- mood_lighting: MUST use format "light source + color palette + effect".
-  GOOD: "dim amber candle light, teal shadow palette, volumetric fog drifting along floor"
-  GOOD: "cold blue moonlight rim-lighting silhouette, deep violet shadows, mist creeping along stone floor"
-  GOOD: "single candle chiaroscuro, amber flicker on face, pitch-black surrounding void"
-  BAD: "spooky lighting", "dark atmosphere", "dramatic light"
-  This MUST be horror-appropriate. No warm sunlight unless narration explicitly describes daytime safety.
-  CINEMATIC LIGHTING TERMS to use when applicable (Flux responds strongly to these):
-    - "chiaroscuro" → high-contrast painterly light/dark, ideal for single-source candle/lantern shots
-    - "rim lighting" / "rim-lit silhouette" → separates subject from dark background; pair with moonlight or doorway backlight
-    - "subsurface scattering" → REQUIRED whenever shot_subject == "corpse_face" or any close-up of skin (makes pale dead skin read as flesh, not plastic)
-    - "volumetric fog" / "volumetric god rays" → for any shot with smoke, mist, dust, or light beams through cracks
+- mood_lighting: MUST follow format "[light_source phrase], [palette/contrast phrase], [atmospheric effect phrase]".
+  CRITICAL — DO NOT copy any example verbatim. Combine ONE item from each category below into a UNIQUE phrase per shot.
+  When the same physical location appears across multiple shots, vary at least one of the three components (light intensity / palette / effect) so no two shots have identical mood_lighting.
+  LIGHT_SOURCE vocabulary (pick 1, adapt wording): single candle flicker, dying oil lantern, paper lantern glow, hanging brazier embers, cold blue moonlight, pre-dawn pale grey, dying torch sputter, faint ember crack, lightning flash through window, ritual fire pit blaze, sickly green spirit glow, glowing talisman radiance.
+  PALETTE/CONTRAST vocabulary (pick 1): chiaroscuro high-contrast, deep violet shadows, teal-orange split tone, sickly green tint with black shadows, blood-orange rim with black void, parchment yellow + ink black, desaturated cyan ghost light, rim-lit silhouette against pitch black, hard vertical shadow bars.
+  ATMOSPHERIC_EFFECT vocabulary (pick 1): volumetric god rays through dust, drifting mist along floor, fog tendrils crawling up walls, embers floating in still air, heat shimmer above flame, swirling smoke from incense, dust motes in narrow light shaft, condensation steaming off cold stone.
+  BAD: "spooky lighting", "dark atmosphere", "dramatic light", "warm sunlight" (forbidden — story is horror at night).
+  CINEMATIC LIGHTING TERMS (use when applicable, but do not exhaustively list all in every shot):
+    - "chiaroscuro" → ideal for single-source candle/lantern shots
+    - "rim lighting" → separates subject from dark background; pair with moonlight or doorway backlight
+    - "subsurface scattering" → REQUIRED whenever shot_subject == "corpse_face" or close-up of skin (makes pale dead skin read as flesh, not plastic)
+    - "volumetric fog" / "volumetric god rays" → for shots with smoke, mist, dust, or light beams
   MANDATORY LIGHT-SOURCE LOGIC:
-    - If setting/key_objects mention a candle, lantern, oil lamp, or torch → mood_lighting MUST contain "amber flicker" or "amber candlelight".
-    - If setting/key_objects/narration mention the moon or moonlight → mood_lighting MUST contain "cold blue moonlight" AND "rim" (e.g. "cold blue moonlight rim-lighting").
+    - If setting/key_objects mention candle, lantern, oil lamp, torch → light_source MUST be one of the candle/lantern/torch options above.
+    - If narration mentions moon/moonlight → light_source MUST be "cold blue moonlight" and palette MUST include "rim".
     - If shot_subject == "corpse_face" → mood_lighting MUST contain "subsurface scattering".
 - composition: Camera framing tag if obvious from narration. Otherwise leave empty string "".
   Examples: "medium close-up", "wide establishing shot", "medium shot", "extreme close-up", "macro shot", "low angle shot"

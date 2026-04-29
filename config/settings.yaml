@@ -34,21 +34,35 @@ llm:
 
   # Google Gemini API (api_key: set PIPELINE_GEMINI_API_KEY env var — never hardcode)
   gemini:
-    model: "gemini-2.0-flash"
-    rpm: 15            # free tier: 15 RPM
+    model: "gemini-3-flash"
+    rpm: 5            # free tier: 15 RPM
     max_output_tokens: 8192
+
+  # DeepSeek API (api_key: set PIPELINE_DEEPSEEK_API_KEY env var — never hardcode)
+  # OpenAI-compatible endpoint at https://api.deepseek.com
+  # Models:
+  #   - deepseek-v4-flash (fast, non-thinking by default)
+  #   - deepseek-v4-pro   (thinking-capable; set thinking=true)
+  #   - deepseek-chat / deepseek-reasoner (legacy, deprecated 2026-07-24)
+  deepseek:
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-flash"
+    rpm: 60
+    max_output_tokens: 8192
+    thinking: false           # enable reasoning/thinking mode (use deepseek-v4-pro)
+    reasoning_effort: "medium"  # "low" | "medium" | "high" — only when thinking=true
 
   # Per-phase config — set provider + json_format only
   # model: omit (or leave empty) to use ollama.default_model; set explicitly to override per-phase
   phases:
     summary:
-      provider: "ollama"
+      provider: "deepseek"
       json_format: false   # plain text response — no JSON constraint
     script:
-      provider: "ollama"
+      provider: "deepseek"
       json_format: true
     image_prompt:
-      provider: "ollama"
+      provider: "deepseek"
       json_format: true
 
 # ComfyUI configuration
@@ -78,7 +92,7 @@ piper_speed: 1.1                   # atempo multiplier: 1.0=normal, 1.1=10% fast
 f5tts_model_dir: "models/f5tts"    # local cache dir for F5-TTS VI checkpoint
 f5tts_ref_audio: "assets/ref_voice.wav"  # 6-30s Vietnamese reference audio for voice cloning
 f5tts_ref_text: "Xin chào, tôi là người kể chuyện. Câu chuyện hôm nay sẽ đưa bạn vào một thế giới đầy bí ẩn và rùng rợn."  # transcript of ref audio
-f5tts_speed: 1.0                   # generation speed multiplier
+f5tts_speed: 1.3                   # generation speed multiplier. Lower = clearer/calmer narration. 1.6 was too fast for comfortable listening; 1.3 keeps pace engaging without rushing. Note: pipeline word-budget (3.5 wps) was calibrated at 1.6 — at 1.3 actual rate is ~2.85 wps, so audio will run ~20% longer than planned shot durations; assembler stretches video to match audio.
 f5tts_device: "cuda"               # "cuda" (fast, ~6GB VRAM) | "cpu" (slow, RAM only)
 bgm_volume_db: -15
 # Lead-in silence at the start of every shot's mixed audio. Must be >= shot_transition_duration

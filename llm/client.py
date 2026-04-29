@@ -561,43 +561,201 @@ class GeminiLLMClient:
             raise decode_err
 
 
-def get_summary_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient":
+def _deepseek_retry_wait(retry_state) -> float:  # type: ignore[type-arg]
+    """Custom tenacity wait for DeepSeek: respect Retry-After on 429, else exponential backoff."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        retry_after = float(exc.response.headers.get("retry-after", 30))
+        logger.warning("DeepSeek rate limit (429) — waiting {:.0f}s before retry", retry_after)
+        return retry_after
+    attempt = retry_state.attempt_number
+    return min(2.0 ** attempt * 2, 30.0)
+
+
+class DeepSeekLLMClient:
+    """Thin httpx wrapper for DeepSeek API (OpenAI-compatible chat completions).
+
+    Supports thinking mode via `extra_body={"thinking": {"type": "enabled"}}` and
+    `reasoning_effort` parameter — controlled by settings.llm.deepseek.thinking.
+    """
+
+    def __init__(self) -> None:
+        self.base_url = settings.deepseek_base_url.rstrip("/")
+        self.model = settings.deepseek_model
+        self.timeout = settings.llm_timeout
+        self._api_key = settings.deepseek_api_key
+        self._thinking = settings.deepseek_thinking
+        self._reasoning_effort = settings.deepseek_reasoning_effort
+        self._min_interval: float = 60.0 / max(settings.deepseek_rpm, 1)
+        self._last_call_at: float = 0.0
+        self._rate_lock = threading.Lock()
+        if not self._api_key:
+            logger.warning(
+                "PIPELINE_DEEPSEEK_API_KEY is not set — DeepSeek API calls will fail."
+            )
+
+    def health_check(self) -> bool:
+        if not self._api_key:
+            raise RuntimeError("DeepSeek API key not configured (PIPELINE_DEEPSEEK_API_KEY).")
+        return True
+
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=_deepseek_retry_wait,
+        retry=retry_if_exception_type((httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError)),
+        reraise=True,
+    )
+    def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        response_format: Optional[str] = None,
+    ) -> str:
+        """Call /chat/completions and return assistant message content."""
+        if not self._api_key:
+            raise RuntimeError("DeepSeek API key not set. Export PIPELINE_DEEPSEEK_API_KEY env var.")
+
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": settings.deepseek_max_output_tokens,
+            "stream": False,
+        }
+        if response_format == "json":
+            payload["response_format"] = {"type": "json_object"}
+        if self._thinking:
+            # OpenAI-SDK extra_body fields are passed at top level for raw HTTP.
+            payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = self._reasoning_effort
+
+        # Proactive throttle
+        with self._rate_lock:
+            elapsed = time.monotonic() - self._last_call_at
+            wait = self._min_interval - elapsed
+            if wait > 0:
+                logger.debug("DeepSeek rate throttle: sleeping {:.1f}s", wait)
+                time.sleep(wait)
+            self._last_call_at = time.monotonic()
+
+        logger.debug(
+            "Calling DeepSeek API | model={} thinking={} prompt_len={}",
+            self.model, self._thinking, len(prompt),
+        )
+        resp = httpx.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=self.timeout,
+        )
+        # Do not retry on 4xx except 429
+        if resp.status_code not in (429,) and 400 <= resp.status_code < 500:
+            logger.error(
+                "DeepSeek API client error {} — not retrying: {}",
+                resp.status_code, resp.text[:300],
+            )
+            resp.raise_for_status()
+        resp.raise_for_status()
+
+        data = resp.json()
+        choice = data["choices"][0]
+        finish_reason = choice.get("finish_reason", "")
+        content = choice["message"]["content"] or ""
+        if finish_reason == "length":
+            logger.warning(
+                "DeepSeek output truncated (finish_reason=length) | "
+                "model={} output_len={} max_tokens={}",
+                self.model, len(content), settings.deepseek_max_output_tokens,
+            )
+            raise httpx.HTTPStatusError(
+                "Output truncated (finish_reason=length) — increase deepseek.max_output_tokens",
+                request=resp.request,
+                response=resp,
+            )
+        return content
+
+    def generate_json(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.3,
+    ) -> Any:
+        """Call DeepSeek API and return parsed JSON. Tries to repair malformed JSON if needed."""
+        raw = self.generate(
+            prompt=prompt,
+            system=system,
+            temperature=temperature,
+            response_format="json",
+        )
+        stripped = OllamaClient._strip_markdown_fences(raw)
+        if not stripped:
+            logger.warning("DeepSeek returned empty response — will retry")
+            raise json.JSONDecodeError("Empty response from DeepSeek", "", 0)
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError as decode_err:
+            logger.warning("DeepSeek returned non-JSON (first 200 chars): {!r}", stripped[:200])
+            repaired = OllamaClient._repair_json_text(self, stripped)
+            if repaired:
+                try:
+                    return json.loads(repaired)
+                except json.JSONDecodeError:
+                    logger.warning("JSON repair attempt failed (first 200 chars): {!r}", repaired[:200])
+            raise decode_err
+
+
+_LLMClient = "OllamaClient | GitHubLLMClient | GeminiLLMClient | DeepSeekLLMClient"
+
+
+def _build_provider_client(provider: str, *, ollama_model: str, ollama_json: bool):
+    """Resolve provider name → client instance. Falls back to Ollama for unknown providers."""
+    if provider == "github":
+        return GitHubLLMClient()
+    if provider == "gemini":
+        return GeminiLLMClient()
+    if provider == "deepseek":
+        return DeepSeekLLMClient()
+    return OllamaClient(model=ollama_model, json_format=ollama_json)
+
+
+def get_summary_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient | DeepSeekLLMClient":
     """Factory: return the correct LLM client for the summary/character-extraction phase."""
-    if settings.summary_provider == "github":
-        return GitHubLLMClient()
-    return OllamaClient(
-        model=settings.effective_summary_model,
-        json_format=settings.summary_json_format,
+    return _build_provider_client(
+        settings.summary_provider,
+        ollama_model=settings.effective_summary_model,
+        ollama_json=settings.summary_json_format,
     )
 
 
-def get_script_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient":
+def get_script_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient | DeepSeekLLMClient":
     """Factory: return the correct LLM client for the scriptwriting phase."""
-    if settings.script_provider == "github":
-        return GitHubLLMClient()
-    return OllamaClient(
-        model=settings.effective_script_model,
-        json_format=settings.script_json_format,
+    return _build_provider_client(
+        settings.script_provider,
+        ollama_model=settings.effective_script_model,
+        ollama_json=settings.script_json_format,
     )
 
 
-def get_image_prompt_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient":
+def get_image_prompt_client() -> "OllamaClient | GitHubLLMClient | GeminiLLMClient | DeepSeekLLMClient":
     """Factory: return the correct LLM client for ComfyUI image-prompt generation.
 
     Controls two tasks together:
     - scene_prompt rewrite pass (scriptwriter)
     - anchor character tag derivation (profile_builder)
-
-    "ollama" uses scene_prompt_model; "github" uses shared github_model credentials;
-    "gemini" uses the Google Gemini REST API (PIPELINE_GEMINI_API_KEY).
     """
-    if settings.image_prompt_provider == "github":
-        return GitHubLLMClient()
-    if settings.image_prompt_provider == "gemini":
-        return GeminiLLMClient()
-    return OllamaClient(
-        model=settings.effective_scene_prompt_model,
-        json_format=settings.scene_prompt_json_format,
+    return _build_provider_client(
+        settings.image_prompt_provider,
+        ollama_model=settings.effective_scene_prompt_model,
+        ollama_json=settings.scene_prompt_json_format,
     )
 
 

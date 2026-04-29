@@ -31,8 +31,8 @@
         1
       ],
       "lora_name": "ink_wash_painting.safetensors",
-      "strength_model": 0.6,
-      "strength_clip": 0.6
+      "strength_model": 0.0,
+      "strength_clip": 0.0
     }
   },
   "3": {
@@ -47,8 +47,8 @@
         1
       ],
       "lora_name": "xianxia_fantasy.safetensors",
-      "strength_model": 0.5,
-      "strength_clip": 0.5
+      "strength_model": 0.0,
+      "strength_clip": 0.0
     }
   },
   "4": {
@@ -162,7 +162,7 @@
   "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "__SCENE_PROMPT__, traditional chinese rural setting, east asian visual aesthetic, sfw, fully clothed, high collar, long sleeves, cinematic dark anime horror style, volumetric fog, desaturated cold palette, high contrast chiaroscuro lighting, film grain, shallow depth of field, intricate details, masterpiece, best quality, highly detailed, dark atmosphere, eerie mood, horror tone, no text, no watermarks",
+      "text": "__SCENE_PROMPT__, traditional chinese rural setting, east asian visual aesthetic, sfw, fully clothed, high collar, long sleeves, cinematic dark horror photorealistic style, cinematic film still, realistic skin texture, volumetric fog, desaturated cold palette, high contrast chiaroscuro lighting, film grain, shallow depth of field, intricate details, masterpiece, best quality, highly detailed, dark atmosphere, eerie mood, horror tone, no text, no watermarks",
       "clip": [
         "4",
         1

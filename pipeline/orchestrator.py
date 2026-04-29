@@ -157,6 +157,72 @@ _CLOTHING_KEYWORDS = frozenset([
 ])
 
 
+# Tags from PonyXL/Danbooru-style character descriptions that Flux either
+# doesn't understand or that conflict with scene_prompt's own framing/composition
+# directives. Stripped before injecting character appearance into Flux prompts.
+_FLUX_UNFRIENDLY_DESC_TAGS = frozenset([
+    # Danbooru count tags — already covered by gender_tags
+    "1boy", "1girl", "2boys", "2girls", "solo",
+    # PonyXL quality scoring tokens
+    "score_9", "score_8", "score_7", "score_6", "score_5", "score_4",
+    "score_9_up", "score_8_up", "score_7_up", "score_6_up",
+    "masterpiece", "best quality", "highly detailed", "high quality",
+    # Scene-dependent — must come from scene_prompt, not character description
+    "looking at viewer", "looking away", "looking down", "looking up",
+    "urban background", "indoor background", "outdoor background",
+    "white background", "simple background", "plain background",
+    "standing", "sitting", "kneeling",
+    # Pony safety tags — workflow CLIP suffix already handles these
+    "sfw", "fully clothed", "high collar", "long sleeves",
+])
+
+
+def _build_character_appearance_tags(char_anchor_pairs: list) -> str:
+    """Build inline character appearance tags for the Flux prompt.
+
+    For each character (max 2), keeps physical-identity tags (hair, eyes, face,
+    body) and clothing tags from `Character.description`, drops Pony/Danbooru
+    noise (score_X, 1boy, solo, looking at viewer, ...) and scene-dependent
+    tags (expression, background) so Flux gets only stable identity hints.
+
+    The combined block is wrapped with a light weight (:1.05) so it nudges
+    Flux toward consistency without overriding scene composition.
+
+    Returns "" when there are no usable tags so callers can skip the section.
+    """
+    if not char_anchor_pairs:
+        return ""
+
+    kept: list[str] = []
+    seen: set[str] = set()
+    for char_obj, _ in char_anchor_pairs[:2]:
+        if not char_obj or not char_obj.description:
+            continue
+        for raw in char_obj.description.split(","):
+            tag = raw.strip()
+            if not tag:
+                continue
+            tag_lower = tag.lower()
+            if tag_lower in _FLUX_UNFRIENDLY_DESC_TAGS:
+                continue
+            # Skip generic *expression tags — scene_prompt drives expression.
+            if tag_lower.endswith(" expression"):
+                continue
+            if tag_lower in seen:
+                continue
+            seen.add(tag_lower)
+            kept.append(tag)
+
+    if not kept:
+        return ""
+
+    # Light weight — strong enough to nudge identity, weak enough not to
+    # override scene action / framing. Cap at 14 tags to leave budget for
+    # scene_prompt and gender_tags inside the 30-tag overall limit.
+    appearance = ", ".join(kept[:14])
+    return f"({appearance}:1.05)"
+
+
 _SCENE_DETAIL_BOOST_TAGS = (
     "cinematic volumetric lighting",
     "eerie unsettling atmosphere",
@@ -463,28 +529,39 @@ _NEGATIVE_BASE = (
 )
 
 _THUMBNAIL_LIGHTING_TAGS = (
-    "bright cinematic lighting",
+    "bright daylight",
     "high key lighting",
     "soft warm rim light",
-    "vivid contrast",
-    "clear subject face",
+    "vivid saturated colors",
+    "punchy contrast",
+    "clear well-lit subject face",
 )
 
+# Aggressive: any tag whose lowercase contains one of these substrings is dropped
+# from the source scene_prompt before being sent to the thumbnail model. The
+# story is horror so prompts are loaded with low-key lighting/colour tags that
+# crush thumbnail visibility on mobile feeds.
 _THUMBNAIL_DARK_FILTER_KEYWORDS = frozenset([
-    "dark", "dim", "night", "moonlight", "low light", "shadowy", "gloom",
+    "dark", "dim", "night", "moonlit", "moonlight", "low light", "low-key",
+    "shadow", "shadowy", "gloom", "gloomy", "murky", "pitch", "pitch-black",
+    "void", "black void", "deep violet", "violet shadow", "teal shadow",
+    "blue rim", "cold blue", "candle", "candlelight", "lantern light",
+    "amber flicker", "dusk", "twilight", "midnight", "fog", "mist",
+    "silhouette", "rim-lighting silhouette", "underexposed",
 ])
 
 _THUMBNAIL_NEGATIVE = (
     "lowres, bad quality, blurry, underexposed, low key lighting, too dark, "
-    "heavy shadows, murky colors"
+    "heavy shadows, murky colors, muddy colors, washed out, silhouette, "
+    "backlit subject, face in shadow, night scene"
 )
 
 
 def _build_thumbnail_scene_prompt(scene_prompt: str) -> str:
     """Build a brighter thumbnail prompt from shot scene tags.
 
-    Removes obviously dark lighting tags and appends high-visibility lighting tags
-    so thumbnails stay readable on mobile feeds.
+    Aggressively strips any tag containing a dark/horror lighting keyword and
+    prepends explicit daylight tags so the thumbnail is readable on mobile feeds.
     """
     tags = [t.strip() for t in scene_prompt.split(",") if t.strip()]
     filtered = [
@@ -493,8 +570,10 @@ def _build_thumbnail_scene_prompt(scene_prompt: str) -> str:
     ]
     base = ", ".join(filtered)
     extras = ", ".join(_THUMBNAIL_LIGHTING_TAGS)
+    # Lighting tags go FIRST so the model latches onto bright lighting before
+    # any residual mood tag from the scene description.
     return ", ".join(
-        [p for p in [base, "wide cinematic shot", extras] if p]
+        [p for p in [extras, "wide cinematic shot", base] if p]
     )
 
 
@@ -599,13 +678,23 @@ def _build_shot_image_params(
 
     scene_prompt_parts = [p for p in [scene_text, artifact_detail_tags, gender_tags] if p]
 
+    # Inject stable character appearance (hair/eyes/face/clothing) from the
+    # character DB. Without IPAdapter (disabled for Flux), this is the only
+    # mechanism keeping the same character looking consistent shot-to-shot.
+    # Placed AFTER gender_tags so identity tags follow the count tag for CLIP.
+    appearance_tags = _build_character_appearance_tags(char_anchor_pairs)
+    if appearance_tags:
+        scene_prompt_parts.append(appearance_tags)
+
     # Prepend wide-framing tags for pure environment shots (no character, no shock close-up)
     if not char_anchor_pairs and not wants_closeup:
         if _SCENE_FRAMING_TAGS not in (scene_prompt_parts[0] if scene_prompt_parts else ""):
             scene_prompt_parts.insert(0, _SCENE_FRAMING_TAGS)
 
     replacements: dict = {
-        "SCENE_PROMPT": _compact_prompt_tags(", ".join(scene_prompt_parts), max_tags=24),
+        # Bumped from 24 → 30 to fit injected character appearance tags without
+        # crowding out scene_prompt content.
+        "SCENE_PROMPT": _compact_prompt_tags(", ".join(scene_prompt_parts), max_tags=30),
         "SEED": seed,
         "WIDTH": settings.image_width,
         "HEIGHT": settings.image_height,
@@ -751,12 +840,160 @@ def _generate_thumbnail(episode_num: int, shot, shot_idx: int) -> None:
             "WIDTH": settings.thumbnail_width,
             "HEIGHT": settings.thumbnail_height,
             "SEED": episode_num * 1000 + shot_idx,
-            "TITLE_TEXT": f"Tập {episode_num}",
-            "CTA_TEXT": "Link bio 👇",
         },
         output_path=thumbnail_path,
     )
+
+    # Post-process: brighten the base image and overlay Vietnamese title/CTA
+    # using a font that supports diacritics (ComfyUI's bundled DrawText+ font
+    # ShareTechMono lacks Vietnamese glyphs).
+    _postprocess_thumbnail(
+        thumbnail_path,
+        title_text=f"Tập {episode_num}",
+        cta_text="Link ở bio »",
+    )
     logger.info("Thumbnail generated | episode={}", episode_num)
+
+
+# Font candidates for Vietnamese text overlay, in priority order. The first
+# path that exists on disk wins. NotoSans/DejaVuSans both support full
+# Vietnamese diacritics.
+_THUMBNAIL_TITLE_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+)
+_THUMBNAIL_CTA_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+)
+
+
+def _resolve_font(candidates: tuple[str, ...]) -> str | None:
+    for path in candidates:
+        if Path(path).exists():
+            return path
+    return None
+
+
+def _postprocess_thumbnail(
+    image_path: Path, title_text: str, cta_text: str
+) -> None:
+    """Brighten the base thumbnail and overlay Vietnamese title/CTA.
+
+    Brightening lifts mid-tones since the source horror prompts often
+    yield muddy outputs even after prompt filtering. Text overlay is done
+    here (not in ComfyUI) because the bundled DrawText+ font has no
+    Vietnamese diacritic support.
+    """
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+
+    img = Image.open(image_path).convert("RGB")
+    # Brightness +18%, contrast +15%, saturation +15% — lifts dark mids
+    # without blowing highlights.
+    img = ImageEnhance.Brightness(img).enhance(1.18)
+    img = ImageEnhance.Contrast(img).enhance(1.15)
+    img = ImageEnhance.Color(img).enhance(1.15)
+
+    img = img.convert("RGBA")
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    title_font_path = _resolve_font(_THUMBNAIL_TITLE_FONT_CANDIDATES)
+    cta_font_path = _resolve_font(_THUMBNAIL_CTA_FONT_CANDIDATES)
+
+    if title_font_path is None or cta_font_path is None:
+        logger.warning(
+            "No Vietnamese font found, skipping thumbnail text overlay | "
+            "image={}", image_path,
+        )
+        img.convert("RGB").save(image_path)
+        return
+
+    w, h = img.size
+    # Scale font sizes relative to image height so 720p and other resolutions
+    # render the same visual proportions.
+    title_size = max(36, int(h * 0.10))
+    cta_size = max(24, int(h * 0.065))
+    title_font = ImageFont.truetype(title_font_path, title_size)
+    cta_font = ImageFont.truetype(cta_font_path, cta_size)
+
+    margin_x = int(w * 0.045)
+    margin_y = int(h * 0.06)
+    pad_x = int(title_size * 0.35)
+    pad_y = int(title_size * 0.18)
+
+    def _draw_text_with_box(
+        text: str,
+        font: ImageFont.FreeTypeFont,
+        anchor_xy: tuple[int, int],
+        text_color: tuple[int, int, int, int],
+        box_color: tuple[int, int, int, int],
+        align: str = "left",
+        baseline: str = "top",
+    ) -> None:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        x, y = anchor_xy
+        if align == "left":
+            box_left = x - pad_x
+        else:
+            box_left = x - text_w - pad_x
+        if baseline == "top":
+            box_top = y - pad_y
+        else:
+            box_top = y - text_h - pad_y
+        box_right = box_left + text_w + pad_x * 2
+        box_bottom = box_top + text_h + pad_y * 2
+        draw.rounded_rectangle(
+            [box_left, box_top, box_right, box_bottom],
+            radius=int(pad_y * 0.8),
+            fill=box_color,
+        )
+        # Drop shadow for legibility on busy backgrounds.
+        shadow_offset = max(2, int(title_size * 0.04))
+        draw.text(
+            (x - bbox[0] + shadow_offset, y - bbox[1] + shadow_offset),
+            text,
+            font=font,
+            fill=(0, 0, 0, 200),
+        )
+        draw.text(
+            (x - bbox[0], y - bbox[1]),
+            text,
+            font=font,
+            fill=text_color,
+        )
+
+    # Title — top-left, white on semi-opaque dark plate
+    _draw_text_with_box(
+        title_text,
+        title_font,
+        (margin_x, margin_y),
+        text_color=(255, 255, 255, 255),
+        box_color=(0, 0, 0, 170),
+        align="left",
+        baseline="top",
+    )
+
+    # CTA — bottom-left, gold on semi-opaque dark plate
+    cta_bbox = draw.textbbox((0, 0), cta_text, font=cta_font)
+    cta_h = cta_bbox[3] - cta_bbox[1]
+    cta_y = h - margin_y - cta_h
+    _draw_text_with_box(
+        cta_text,
+        cta_font,
+        (margin_x, cta_y),
+        text_color=(255, 215, 0, 255),
+        box_color=(0, 0, 0, 170),
+        align="left",
+        baseline="top",
+    )
+
+    composed = Image.alpha_composite(img, overlay).convert("RGB")
+    composed.save(image_path)
 
 
 def run_audio(episode_num: int, db: StateDB, dry_run: bool = False) -> None:

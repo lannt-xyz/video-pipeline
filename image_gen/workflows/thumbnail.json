@@ -1,22 +1,19 @@
 {
   "_meta": {
-    "description": "Thumbnail generation workflow \u2014 16:9 (1280x720) with title and CTA text overlay.",
+    "description": "Thumbnail base image \u2014 16:9 (1280x720). Title/CTA text overlay is applied in Python (Pillow) AFTER generation because the ComfyUI DrawText+ node only ships ShareTechMono which lacks Vietnamese diacritics.",
     "checkpoint": "dreamshaperXL_lightningDPMSDE.safetensors",
     "placeholders": {
       "SCENE_PROMPT": "Positive prompt in English",
       "NEGATIVE_PROMPT": "Negative prompt",
       "WIDTH": 1280,
       "HEIGHT": 720,
-      "SEED": 42,
-      "TITLE_TEXT": "T\u1eadp 1",
-      "CTA_TEXT": "Link bio \ud83d\udc47"
+      "SEED": 42
     },
     "required_nodes": [
       "CheckpointLoaderSimple",
       "CLIPTextEncode",
       "KSampler",
       "VAEDecode",
-      "DrawText+",
       "SaveImage"
     ]
   },
@@ -95,54 +92,10 @@
     }
   },
   "8": {
-    "class_type": "DrawText+",
-    "inputs": {
-      "text": "__TITLE_TEXT__",
-      "font": "ShareTechMono-Regular.ttf",
-      "size": 72,
-      "color": "#FFFFFF",
-      "background_color": "#00000088",
-      "shadow_distance": 3,
-      "shadow_blur": 2,
-      "shadow_color": "#000000",
-      "horizontal_align": "left",
-      "vertical_align": "top",
-      "offset_x": 60,
-      "offset_y": 60,
-      "direction": "ltr",
-      "img_composite": [
-        "7",
-        0
-      ]
-    }
-  },
-  "9": {
-    "class_type": "DrawText+",
-    "inputs": {
-      "text": "__CTA_TEXT__",
-      "font": "ShareTechMono-Regular.ttf",
-      "size": 48,
-      "color": "#FFD700",
-      "background_color": "#00000088",
-      "shadow_distance": 3,
-      "shadow_blur": 2,
-      "shadow_color": "#000000",
-      "horizontal_align": "left",
-      "vertical_align": "bottom",
-      "offset_x": 60,
-      "offset_y": -60,
-      "direction": "ltr",
-      "img_composite": [
-        "8",
-        0
-      ]
-    }
-  },
-  "10": {
     "class_type": "SaveImage",
     "inputs": {
       "images": [
-        "9",
+        "7",
         0
       ],
       "filename_prefix": "thumbnail"

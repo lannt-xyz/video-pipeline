@@ -29,6 +29,16 @@ class GeminiLLMConfig(BaseModel):
     rpm: int = 15            # free tier: 15 RPM
     max_output_tokens: int = 8192
 
+
+class DeepSeekLLMConfig(BaseModel):
+    base_url: str = "https://api.deepseek.com"
+    model: str = "deepseek-v4-flash"
+    rpm: int = 60                       # generous default; DeepSeek paid tier has high limits
+    max_output_tokens: int = 8192
+    thinking: bool = False              # enable reasoning/thinking mode (deepseek-v4-pro)
+    reasoning_effort: str = "medium"    # "low" | "medium" | "high" — only used when thinking=True
+
+
 class PhaseConfig(BaseModel):
     provider: str = "ollama"  # "ollama" | "github"
     model: str = ""           # empty = use ollama.default_model (ignored when provider=github)
@@ -48,6 +58,7 @@ class LLMConfig(BaseModel):
     ollama: OllamaLLMConfig = OllamaLLMConfig()
     github: GitHubLLMConfig = GitHubLLMConfig()
     gemini: GeminiLLMConfig = GeminiLLMConfig()
+    deepseek: DeepSeekLLMConfig = DeepSeekLLMConfig()
     phases: PhasesConfig = PhasesConfig()
 
 
@@ -93,6 +104,8 @@ class Settings(BaseSettings):
     github_token: str = ""
     # Gemini API key: set via env var PIPELINE_GEMINI_API_KEY (never hardcode)
     gemini_api_key: str = ""
+    # DeepSeek API key: set via env var PIPELINE_DEEPSEEK_API_KEY (never hardcode)
+    deepseek_api_key: str = ""
 
     comfyui_timeout: int = 300
     comfyui_poll_interval: int = 2
@@ -224,6 +237,30 @@ class Settings(BaseSettings):
     @property
     def gemini_max_output_tokens(self) -> int:
         return self.llm.gemini.max_output_tokens
+
+    @property
+    def deepseek_base_url(self) -> str:
+        return self.llm.deepseek.base_url
+
+    @property
+    def deepseek_model(self) -> str:
+        return self.llm.deepseek.model
+
+    @property
+    def deepseek_rpm(self) -> int:
+        return self.llm.deepseek.rpm
+
+    @property
+    def deepseek_max_output_tokens(self) -> int:
+        return self.llm.deepseek.max_output_tokens
+
+    @property
+    def deepseek_thinking(self) -> bool:
+        return self.llm.deepseek.thinking
+
+    @property
+    def deepseek_reasoning_effort(self) -> str:
+        return self.llm.deepseek.reasoning_effort
 
     @property
     def summary_provider(self) -> str:
