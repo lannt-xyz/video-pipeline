@@ -652,6 +652,34 @@ MINIMUM DETAIL REQUIREMENTS — strictly enforced:
   WRONG: "talisman paper" → RIGHT: "yellowed talisman paper with ink bleeding at edges from moisture"
 - Total scene_prompt word count MUST be at least 40 words. If shorter, EXPAND by adding texture, material, and interaction details.
 
+CREATURE VISUAL TAXONOMY — when narration contains creature keywords, apply the EXACT visual profile below. Do NOT use generic "pale corpse" or "ghostly figure" — use the specific template:
+
+Nữ tử thi (keywords: nữ tử thi, thi thể phụ nữ, xác phụ nữ, chết khi mang thai):
+  → "reanimated female corpse with ashen grey mottled skin, completely slack facial muscles with jaw fallen open, milky clouded eyes reflecting no light, lank black hair plastered to hollow sunken cheeks, rigid arms drawn inward, post-mortem lividity darkening neck and collar bones"
+  → If holding infant add: "clutching small shrouded infant bundle against chest in death-grip embrace"
+
+Thi biến / sát thi (keywords: thi biến, xác biến, dương thi, cương thi, sát thi):
+  → "grotesquely contorted corpse-creature with spine arched backward beyond human range, all joints bent against natural direction, skin split at pressure points revealing dark necrotic tissue, fingers elongated into talon-like claws with blackened nails"
+  → Lighting MUST include: "putrid green bioluminescence emanating from skin fissures"
+
+Oan hồn / cô hồn (keywords: oan hồn, cô hồn, hồn oan, vọng hồn):
+  → "translucent vengeful female ghost suspended two feet above ground, hollow black voids where eyes once were, long disheveled black hair floating upward against gravity in frozen scream position, cold cyan light bleeding through semi-transparent silhouette"
+  → Background MUST include: "dark soul-mist curling along ground beneath her feet"
+
+Bị nhập / chiếm hồn (keywords: bị nhập, nhập hồn, chiếm hồn, cướp xác):
+  → "possessed living figure with eyes rolled completely white showing only sclera, head tilted at unnatural angle beyond normal range, limbs moving in jerky disconnected marionette motions, subtle dark veins spreading from temples across skin"
+
+Tiểu quỷ / âm binh (keywords: tiểu quỷ, âm binh, quỷ nhỏ):
+  → "small malevolent spirit-creature with shriveled mummified limbs, glistening black skin absorbing surrounding light, oversized head with needle-like serrated teeth in permanent open-mouth grimace, crouched low like a predator"
+
+Tà đạo sĩ (keywords: tà đạo, địa tàng, ma đạo, tà thuật):
+  → "corrupted daoist figure in charred tattered robes, ritual brands burned directly into forearm skin in complex patterns, eyes glowing with sickly green inner light, dark necrotic energy coiling around outstretched hands"
+
+Lighting rules for creature shots:
+- Ghost/spirit: MUST use "subsurface scattering on translucent skin" + "cold cyan rim light"
+- Thi biến: MUST use "putrid green bioluminescence"
+- Corpse: MUST use "cold blue moonlight rim-lighting corpse from above"
+
 Return a JSON ARRAY (same length as input, same order):
 [{"shot_index": 0, "scene_prompt": "rewritten phrases..."}, ...]
 CRITICAL: Return ONLY the JSON array, no markdown, no explanation."""
@@ -672,19 +700,42 @@ _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"kiếm|đao trấn|long tuyền", re.IGNORECASE), "ornate daoist sword in hand"),
     (re.compile(r"thiên sư bài|bài thiên sư", re.IGNORECASE), "ritual celestial master badge in hand"),
     (re.compile(r"hồ lô|bầu hồ lô", re.IGNORECASE), "daoist gourd flask"),
-    # Horror/supernatural object tags
-    (re.compile(r"hồn|vong|linh hồn|oan hồn", re.IGNORECASE), "faint ghostly silhouette in shadow"),
-    (re.compile(r"máu|vết máu|đẫm máu", re.IGNORECASE), "dark blood stain on surface"),
-    (re.compile(r"xương|bộ xương|sọ người", re.IGNORECASE), "scattered bones on ground"),
-    (re.compile(r"thi thể|xác chết|\bxác\b|thây|tử thi|nữ tử thi", re.IGNORECASE), "pale lifeless corpse with rigid limbs"),
+    # ── Creature-specific visual templates (must come before generic fallbacks) ─
+    # Nữ tử thi — reanimated female corpse (key visual: upright, holding infant)
+    (re.compile(r"nữ tử thi", re.IGNORECASE),
+     "reanimated female corpse with ashen grey mottled skin, completely slack facial muscles with jaw fallen open, milky clouded eyes reflecting no light, lank black hair plastered to hollow sunken cheeks, rigid arms drawn inward, post-mortem lividity darkening neck and collar bones"),
+    # Thi biến — corpse transformation (contorting body, unnatural anatomy)
+    (re.compile(r"thi biến|xác biến|cương thi|dương thi|sát thi", re.IGNORECASE),
+     "grotesquely contorted corpse-creature with spine arched backward beyond human range, all joints bent against natural direction, skin split at pressure points revealing dark necrotic tissue, fingers elongated into talon-like claws with blackened nails, putrid green bioluminescence emanating from skin fissures"),
+    # Oan hồn / cô hồn — vengeful / wandering ghost (semi-transparent, suspended)
+    (re.compile(r"oan hồn|cô hồn|hồn oan|vọng hồn", re.IGNORECASE),
+     "translucent vengeful female ghost suspended two feet above ground, hollow black voids where eyes once were, long disheveled black hair floating upward against gravity, cold cyan light bleeding through semi-transparent silhouette, dark soul-mist curling along ground beneath her"),
+    # Generic ghost/spirit fallback — only if no specific type matched above
+    (re.compile(r"\bhồn\b|\bvong\b|linh hồn", re.IGNORECASE),
+     "semi-transparent spectral figure with desaturated cold cyan color bleeding through form, edges dissolving into surrounding darkness"),
+    # Bị nhập — possession (normal person body, wrong eyes, unnatural movement)
+    (re.compile(r"bị nhập|nhập hồn|nhập xác|chiếm hồn|cướp xác", re.IGNORECASE),
+     "possessed living figure with eyes rolled completely white showing only sclera, head tilted at unnatural angle, limbs moving in jerky disconnected marionette motions, subtle dark veins spreading from temples across skin"),
+    # Tiểu quỷ / âm binh — minor demons / spirit soldiers
+    (re.compile(r"tiểu quỷ|âm binh|quỷ nhỏ", re.IGNORECASE),
+     "small malevolent spirit-creature with shriveled mummified limbs, glistening black skin absorbing surrounding light, oversized head with needle-like serrated teeth in permanent open-mouth grimace, crouched low to ground like a predator"),
+    # Tà đạo sĩ / địa tàng — evil daoist / earth spirit forms
+    (re.compile(r"tà đạo|địa tàng|ma đạo", re.IGNORECASE),
+     "corrupted daoist figure in charred tattered robes, ritual brands burned directly into forearm skin in complex patterns, eyes glowing with sickly green inner light, dark necrotic energy coiling around outstretched hands"),
+    # ── Horror/supernatural atmosphere ───────────────────────────────────────
+    (re.compile(r"máu|vết máu|đẫm máu", re.IGNORECASE), "dark arterial blood spreading across surface in irregular stain with pooling edges"),
+    (re.compile(r"xương|bộ xương|sọ người", re.IGNORECASE), "yellowed human bones with hairline cracks and dark soil embedded in joints"),
+    # Generic corpse fallback — only if no specific creature type matched above
+    (re.compile(r"thi thể|xác chết|\bxác\b|thây|tử thi", re.IGNORECASE),
+     "pale lifeless corpse with parchment-dry skin, blue-grey veins visible through translucent dermis, rigid limbs frozen in final position, cold blue moonlight rim-lighting corpse from above"),
     # NOTE: do NOT use bare `mồ` — it matches "mồ hôi" (sweat), "mồ côi" (orphan).
     # Require explicit grave-related compounds only.
-    (re.compile(r"\bmộ\b|ngôi mộ|phần mộ|nấm mồ|mồ mả|mộ phần|đào mộ|khai quật mộ", re.IGNORECASE), "chinese earthen grave mound with carved stone stele"),
-    (re.compile(r"nến|đèn cầy", re.IGNORECASE), "dripping wax candle with flickering flame"),
-    (re.compile(r"trắng bệch|trắng nhợt|xanh xao|tái mét", re.IGNORECASE), "parchment-dry pale skin with blue-grey veins visible through translucent dermis"),
-    (re.compile(r"trợn trừng|mắt mở to|mắt trợn", re.IGNORECASE), "wide staring dead eyes with dilated pupils"),
-    (re.compile(r"khí âm|âm khí|khí lạnh|hàn khí", re.IGNORECASE), "cold dark mist emanating from body"),
-    (re.compile(r"đứa trẻ|đứa bé|hài nhi|trẻ con", re.IGNORECASE), "small child body wrapped in cloth"),
+    (re.compile(r"\bmộ\b|ngôi mộ|phần mộ|nấm mồ|mồ mả|mộ phần|đào mộ|khai quật mộ", re.IGNORECASE), "chinese earthen grave mound with moss-covered granite stele and hairline cracks in stone"),
+    (re.compile(r"nến|đèn cầy", re.IGNORECASE), "dripping wax candle with guttering amber flame casting long unsteady shadows across surface"),
+    (re.compile(r"trắng bệch|trắng nhợt|xanh xao|tái mét", re.IGNORECASE), "parchment-dry pale skin with blue-grey veins visible through translucent dermis and mottled lividity patches"),
+    (re.compile(r"trợn trừng|mắt mở to|mắt trợn", re.IGNORECASE), "wide staring dead eyes with milky clouded pupils and burst blood vessels radiating from sclera edges"),
+    (re.compile(r"khí âm|âm khí|khí lạnh|hàn khí", re.IGNORECASE), "cold dark necrotic mist seeping from body and spreading along ground like low-lying fog"),
+    (re.compile(r"đứa trẻ|đứa bé|hài nhi|trẻ con", re.IGNORECASE), "small pallid child body wrapped in coarse undyed hemp cloth with fraying edges"),
 ]
 
 # Action/pose tags — inserted EARLY in scene_prompt and replace weak generic poses.
