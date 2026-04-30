@@ -93,7 +93,7 @@
       "conditioning": ["5", 0],
       "style_model": ["23", 0],
       "clip_vision_output": ["22", 0],
-      "strength_type": "linear",
+      "strength_type": "multiply",
       "strength": "__REDUX_STRENGTH__"
     }
   },
@@ -118,7 +118,7 @@
       "conditioning": ["24", 0],
       "style_model": ["23", 0],
       "clip_vision_output": ["31", 0],
-      "strength_type": "linear",
+      "strength_type": "multiply",
       "strength": "__SCENE_REF_STRENGTH__"
     }
   },

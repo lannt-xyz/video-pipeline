@@ -79,7 +79,7 @@ image_height: 1024
 
 # Flux Redux — character identity conditioning strength (0.0 = disabled, 1.0 = full clone)
 # 0.25-0.35: subtle identity anchor without over-cloning character appearance into background
-redux_strength: 0.3
+redux_strength: 0.1
 
 # Flux Redux — scene reference conditioning strength for intra-scene background consistency
 # Applied to shots 2+ within the same scene_id using the first shot as visual reference

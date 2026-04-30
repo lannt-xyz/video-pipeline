@@ -91,7 +91,7 @@
       "conditioning": ["5", 0],
       "style_model": ["23", 0],
       "clip_vision_output": ["22", 0],
-      "strength_type": "linear",
+      "strength_type": "multiply",
       "strength": "__REDUX_STRENGTH__"
     }
   },

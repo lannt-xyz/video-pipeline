@@ -861,31 +861,30 @@ def _build_shot_image_params(
         replacements["DENOISE"] = denoise
         # img2img_scene still uses SDXL — needs NEGATIVE_PROMPT
         replacements["NEGATIVE_PROMPT"] = _NEGATIVE_BASE
-    elif char_anchor_pairs:
-        # Character shot — use Flux Redux for identity consistency.
-        # Use the first character's anchor.png as the style reference image.
-        # generate_image() will upload the Path to ComfyUI before submission.
+    elif char_anchor_pairs and wants_closeup:
+        # Close-up shot (wound, object, entity) WITH a character present.
+        # Safe to use character Redux because the anchor portrait composition
+        # matches the intended tight framing.
         anchor_path = char_anchor_pairs[0][1][0]  # (char_obj, [anchor_paths])[1][0]
         if scene_ref_image_path is not None:
-            # Subsequent shot in same scene: dual Redux (char identity + scene background)
             workflow = "image_gen/workflows/flux_txt2img_scene_dual_redux.json"
             replacements["ANCHOR_IMAGE"] = anchor_path
             replacements["REDUX_STRENGTH"] = settings.redux_strength
             replacements["SCENE_REF_IMAGE"] = scene_ref_image_path
             replacements["SCENE_REF_STRENGTH"] = settings.scene_ref_strength
         else:
-            # First shot in this scene (or no scene_id): character Redux only
             workflow = "image_gen/workflows/flux_txt2img_scene_redux.json"
             replacements["ANCHOR_IMAGE"] = anchor_path
             replacements["REDUX_STRENGTH"] = settings.redux_strength
     else:
+        # Wide/medium scene shots (person_action, environment) — character appearance
+        # is enforced via text prompt tags only. NOT using character Redux because
+        # anchor images are portrait close-ups and would pull composition to portrait.
         if scene_ref_image_path is not None:
-            # Scene-only shot (no characters) following the first shot in the same scene
             workflow = "image_gen/workflows/flux_txt2img_scene_ref.json"
             replacements["SCENE_REF_IMAGE"] = scene_ref_image_path
             replacements["SCENE_REF_STRENGTH"] = settings.scene_ref_strength
         else:
-            # Scene-only shot (no characters) → plain Flux txt2img
             workflow = "image_gen/workflows/flux_txt2img_scene.json"
 
     return workflow, replacements

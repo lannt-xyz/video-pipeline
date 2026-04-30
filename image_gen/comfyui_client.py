@@ -53,7 +53,7 @@ class ComfyUIClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(min=5, max=30),
-        retry=retry_if_exception_type(httpx.HTTPError),
+        retry=retry_if_exception_type((httpx.NetworkError, httpx.TimeoutException)),
     )
     def submit_prompt(self, workflow: dict) -> str:
         """Submit a workflow prompt. Returns prompt_id."""

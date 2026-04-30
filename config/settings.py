@@ -180,7 +180,7 @@ class Settings(BaseSettings):
     image_height: int = 1280
     thumbnail_width: int = 1280
     thumbnail_height: int = 720
-    redux_strength: float = 0.3
+    redux_strength: float = 0.1
     # Scene reference Redux strength: first shot of scene used as soft background anchor
     # 0.15-0.25 recommended — lighter than char Redux to avoid over-constraining composition
     scene_ref_strength: float = 0.2
