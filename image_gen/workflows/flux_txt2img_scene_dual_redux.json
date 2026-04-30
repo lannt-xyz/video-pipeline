@@ -1,0 +1,177 @@
+{
+  "_meta": {
+    "description": "Flux Dev txt2img + dual Redux conditioning: character anchor (identity) + scene reference (background consistency). Used for character shots that are NOT the first shot in their scene_id. Chain: FluxGuidance → StyleModelApply[char] → StyleModelApply[scene_ref] → BasicGuider.",
+    "model": "flux1-dev-fp8.safetensors",
+    "redux_model": "flux1-redux-dev.safetensors",
+    "vision_model": "sigclip_vision_patch14_384.safetensors",
+    "note": "REDUX_STRENGTH ~0.25-0.35 for character, SCENE_REF_STRENGTH ~0.15-0.25 for scene. CLIPVision and StyleModel are shared across both StyleModelApply nodes.",
+    "placeholders": {
+      "SCENE_PROMPT": "Positive prompt in English (comma-separated tags)",
+      "WIDTH": 768,
+      "HEIGHT": 1024,
+      "SEED": 42,
+      "ANCHOR_IMAGE": "character anchor filename as known to ComfyUI",
+      "REDUX_STRENGTH": 0.3,
+      "SCENE_REF_IMAGE": "first-shot scene image filename as known to ComfyUI",
+      "SCENE_REF_STRENGTH": 0.2
+    }
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux1-dev-fp8.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    }
+  },
+  "2": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "clip_l.safetensors",
+      "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
+      "type": "flux",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": "__WIDTH__",
+      "height": "__HEIGHT__",
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "Photorealistic cinematic film still from a live-action wuxia movie, shot on 35mm anamorphic film, Kodak Vision3 500T, natural film grain, realistic human skin with visible pores and subsurface scattering, practical on-set lighting, shallow depth of field, volumetric atmospheric haze, traditional Chinese rural production design, East Asian cast. __SCENE_PROMPT__.",
+      "clip": ["2", 0]
+    }
+  },
+  "5": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["6", 0],
+      "guidance": 3.5
+    }
+  },
+  "20": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "sigclip_vision_patch14_384.safetensors"
+    }
+  },
+  "21": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__ANCHOR_IMAGE__",
+      "upload": "image"
+    }
+  },
+  "22": {
+    "class_type": "CLIPVisionEncode",
+    "inputs": {
+      "clip_vision": ["20", 0],
+      "image": ["21", 0],
+      "crop": "center"
+    }
+  },
+  "23": {
+    "class_type": "StyleModelLoader",
+    "inputs": {
+      "style_model_name": "flux1-redux-dev.safetensors"
+    }
+  },
+  "24": {
+    "class_type": "StyleModelApply",
+    "inputs": {
+      "conditioning": ["5", 0],
+      "style_model": ["23", 0],
+      "clip_vision_output": ["22", 0],
+      "strength_type": "linear",
+      "strength": "__REDUX_STRENGTH__"
+    }
+  },
+  "30": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__SCENE_REF_IMAGE__",
+      "upload": "image"
+    }
+  },
+  "31": {
+    "class_type": "CLIPVisionEncode",
+    "inputs": {
+      "clip_vision": ["20", 0],
+      "image": ["30", 0],
+      "crop": "center"
+    }
+  },
+  "32": {
+    "class_type": "StyleModelApply",
+    "inputs": {
+      "conditioning": ["24", 0],
+      "style_model": ["23", 0],
+      "clip_vision_output": ["31", 0],
+      "strength_type": "linear",
+      "strength": "__SCENE_REF_STRENGTH__"
+    }
+  },
+  "7": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": ["1", 0],
+      "conditioning": ["32", 0]
+    }
+  },
+  "9": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": "__SEED__"
+    }
+  },
+  "10": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "11": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": ["1", 0],
+      "scheduler": "simple",
+      "steps": 20,
+      "denoise": 1.0
+    }
+  },
+  "8": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["9", 0],
+      "guider": ["7", 0],
+      "sampler": ["10", 0],
+      "sigmas": ["11", 0],
+      "latent_image": ["4", 0]
+    }
+  },
+  "12": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["3", 0]
+    }
+  },
+  "13": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["12", 0],
+      "filename_prefix": "ComfyUI"
+    }
+  }
+}

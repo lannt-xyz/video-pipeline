@@ -134,6 +134,35 @@ async def _piper_tts(text: str, output_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 _f5tts_instance = None  # module-level singleton; loaded on first use
+_f5tts_deps_ok: bool | None = None  # None = not yet probed
+
+
+def _probe_f5tts_deps() -> bool:
+    """Return True if torchcodec (required by f5-tts) can be loaded.
+
+    Probes once per process and caches the result.  If torchcodec fails to
+    load FFmpeg shared libraries a single WARNING is emitted instead of a
+    full multi-page traceback for every shot.
+    """
+    global _f5tts_deps_ok
+    if _f5tts_deps_ok is not None:
+        return _f5tts_deps_ok
+    try:
+        import torchcodec  # noqa: F401  — pulled in at f5_tts.api import time
+        _f5tts_deps_ok = True
+    except (OSError, ImportError) as exc:
+        # Keep only the first non-empty line — the full message is ~60 lines.
+        first_line = next(
+            (ln.strip() for ln in str(exc).splitlines() if ln.strip()), str(exc)
+        )
+        logger.warning(
+            "F5-TTS disabled for this session: torchcodec could not load FFmpeg "
+            "shared libs ({}). Rebuild the Docker image to fix. "
+            "All TTS will use edge-tts fallback.",
+            first_line,
+        )
+        _f5tts_deps_ok = False
+    return _f5tts_deps_ok
 
 _F5TTS_HF_REPO = "hynt/F5-TTS-Vietnamese-ViVoice"
 _F5TTS_CKPT_FILE = "model_last.pt"
@@ -433,7 +462,7 @@ async def _generate_shot(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- F5-TTS Vietnamese (local GPU) ---
-    if settings.tts_provider == "f5tts":
+    if settings.tts_provider == "f5tts" and _probe_f5tts_deps():
         logger.debug(
             "TTS request (f5tts) | shot={} chars={} text={!r}",
             shot_index, len(text), text[:80],
@@ -443,8 +472,11 @@ async def _generate_shot(
             logger.debug("TTS ok (f5tts) | shot={} path={}", shot_index, output_path)
             return shot_index, output_path, False
         except Exception as exc:
+            # Truncate error to first line — torchcodec tracebacks are ~60 lines.
+            err_summary = str(exc).splitlines()[0][:200] if str(exc) else repr(exc)
             logger.error(
-                "F5-TTS failed | shot={} error={} — falling back to edge-tts", shot_index, exc
+                "F5-TTS failed | shot={} error={} — falling back to edge-tts",
+                shot_index, err_summary,
             )
             # fall through to edge-tts below
 

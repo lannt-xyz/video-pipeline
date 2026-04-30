@@ -89,6 +89,8 @@ def _create_zoompan_clip(
             video_bitrate="4000k",
             r=fps,
             t=duration,
+            pix_fmt="yuv420p",
+            **{"color_primaries": "bt709", "color_trc": "bt709", "colorspace": "bt709"},
         ).overwrite_output().run(capture_stdout=True, capture_stderr=True)
     except ffmpeg.Error as exc:
         stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
@@ -182,6 +184,8 @@ def _create_multiframe_clip(
             video_bitrate="4000k",
             r=fps,
             t=duration,
+            pix_fmt="yuv420p",
+            **{"color_primaries": "bt709", "color_trc": "bt709", "colorspace": "bt709"},
         ).overwrite_output().run(capture_stdout=True, capture_stderr=True)
     except ffmpeg.Error as exc:
         stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""

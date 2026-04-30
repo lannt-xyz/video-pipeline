@@ -342,6 +342,10 @@ def _build_xfade_command(
         "-map", "[aout]",
         "-c:v", "h264_nvenc",
         "-b:v", "4000k",
+        "-pix_fmt", "yuv420p",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
         "-c:a", "aac",
         "-b:a", "192k",
         "-r", str(settings.fps),
@@ -392,7 +396,9 @@ def assemble_episode(
         (
             ffmpeg.input(str(clips_to_join[0]))
             .output(str(transition_output), vcodec="h264_nvenc", acodec="aac",
-                    video_bitrate="4000k", audio_bitrate="192k", r=settings.fps)
+                    video_bitrate="4000k", audio_bitrate="192k", r=settings.fps,
+                    pix_fmt="yuv420p",
+                    **{"color_primaries": "bt709", "color_trc": "bt709", "colorspace": "bt709"})
             .overwrite_output()
             .run(quiet=True)
         )
@@ -432,6 +438,8 @@ def assemble_episode(
                 audio_bitrate="192k",
                 video_bitrate="4000k",
                 r=settings.fps,
+                pix_fmt="yuv420p",
+                **{"color_primaries": "bt709", "color_trc": "bt709", "colorspace": "bt709"},
             )
             .overwrite_output()
             .run(quiet=True)
@@ -464,7 +472,8 @@ def _fallback_concat(clips: List[Path], output_path: Path) -> Path:
                 audio_bitrate="192k",
                 video_bitrate="4000k",
                 r=settings.fps,
-                **{"movflags": "+faststart"},
+                pix_fmt="yuv420p",
+                **{"movflags": "+faststart", "color_primaries": "bt709", "color_trc": "bt709", "colorspace": "bt709"},
             )
             .overwrite_output()
             .run(quiet=True)

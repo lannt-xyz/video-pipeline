@@ -1,0 +1,48 @@
+# Version control
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data & output (mount as volumes)
+data/
+logs/
+
+# Large model binaries (mount as volumes)
+models/f5tts/
+models/piper/
+
+# Dev & test
+tests/
+.pytest_cache/
+*.coverage
+.coverage
+
+# IDE
+.vscode/
+.idea/
+
+# Docs & plans
+plans/
+README.md
+
+# Secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db

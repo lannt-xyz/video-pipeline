@@ -90,12 +90,22 @@ def build_anchor(char_id: str, chars_dir: Path, con, *, force: bool = False) -> 
 def main() -> None:
     args = sys.argv[1:]
     force = "--force" in args
+    all_mode = "--all" in args
     char_ids = [a for a in args if not a.startswith("--")]
 
-    if not char_ids:
+    if not char_ids and not all_mode:
         print("Usage: uv run python scripts/build_anchor.py <character_id> [--force]")
+        print("       uv run python scripts/build_anchor.py --all [--force]")
         print("Example: uv run python scripts/build_anchor.py diep_thieu_duong")
         sys.exit(1)
+
+    if all_mode:
+        chars_base = Path(settings.data_dir) / "characters"
+        char_ids = [d.name for d in sorted(chars_base.iterdir()) if d.is_dir()]
+        if not char_ids:
+            print(f"No character directories found in {chars_base}")
+            sys.exit(1)
+        print(f"Building {len(char_ids)} characters: {', '.join(char_ids)}")
 
     db_path = settings.db_path
     if not Path(db_path).exists():

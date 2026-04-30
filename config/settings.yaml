@@ -6,7 +6,7 @@ total_chapters: 3534
 chapters_per_episode: 1
 
 # API endpoints
-comfyui_url: "http://localhost:8188"
+comfyui_url: "http://comfyui:8188"
 
 # LLM configuration — unified per-phase settings
 # provider: "ollama" | "github"
@@ -21,7 +21,7 @@ llm:
   # Ollama — default model shared by all phases using provider=ollama
   # Override per-phase by setting phases.<phase>.model explicitly
   ollama:
-    url: "http://localhost:11434"
+    url: "http://ollama:11434"
     default_model: "gemma4:e4b"
     num_gpu: 999          # 999 = force all layers on GPU (full GPU offload)
     keep_alive: "5m"      # "-1" = giữ model trong VRAM mãi; "0" = unload ngay sau request (nhường VRAM cho ComfyUI)
@@ -76,6 +76,15 @@ comfyui_poll_interval: 2
 # while staying within 8GB VRAM budget for PonyXL SDXL
 image_width: 768
 image_height: 1024
+
+# Flux Redux — character identity conditioning strength (0.0 = disabled, 1.0 = full clone)
+# 0.25-0.35: subtle identity anchor without over-cloning character appearance into background
+redux_strength: 0.3
+
+# Flux Redux — scene reference conditioning strength for intra-scene background consistency
+# Applied to shots 2+ within the same scene_id using the first shot as visual reference
+# 0.15-0.25 recommended — lower than redux_strength to avoid locking composition
+scene_ref_strength: 0.2
 
 # Thumbnail (16:9 landscape)
 thumbnail_width: 1280

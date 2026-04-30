@@ -1,0 +1,76 @@
+networks:
+  ai-hub:
+    driver: bridge
+    external: true
+
+services:
+
+  # -------------------------------------------------------------------------
+  # pipeline — orchestrator chính
+  # -------------------------------------------------------------------------
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: video-pipeline:latest
+    container_name: video_pipeline
+
+    # GPU: toàn bộ GPU, bật capability video để FFmpeg dùng NVENC encoder
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video, compute, utility]
+
+    environment:
+      # CUDA visibility
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+
+      # API keys — đọc từ .env file (xem .env.example)
+      - PIPELINE_GITHUB_TOKEN=${PIPELINE_GITHUB_TOKEN:-}
+      - PIPELINE_GEMINI_API_KEY=${PIPELINE_GEMINI_API_KEY:-}
+      - PIPELINE_DEEPSEEK_API_KEY=${PIPELINE_DEEPSEEK_API_KEY:-}
+
+      # Ghi chú: nếu dùng bridge network (profile full-stack), bỏ comment và sửa:
+      # Pydantic-settings v2 hỗ trợ nested override qua dấu "__" kép.
+      # - PIPELINE_COMFYUI_URL=http://comfyui:8188
+      # - PIPELINE_LLM__OLLAMA__URL=http://ollama:11434
+
+    volumes:
+      # mout source cho dễ debug
+      - ./audio:/app/audio
+      - ./config:/app/config
+      - ./crawler:/app/crawler
+      - ./image_gen:/app/image_gen
+      - ./llm:/app/llm
+      - ./pipeline:/app/pipeline
+      - ./scripts:/app/scripts
+      - ./video:/app/video
+
+      # State + output data (ghi nhiều — phải là volume/bind mount)
+      - ./data:/app/data
+
+      # Logs & debug dumps
+      - ./logs:/app/logs
+
+      # Reference voice, BGM nhạc nền (đọc, không ghi)
+      - ./assets:/app/assets:ro
+
+      # Model checkpoints — F5-TTS (~1.5 GB) + Piper (~60 MB)
+      # Không muốn bake vào image; mount từ host để tái sử dụng
+      - ./models:/app/models:ro
+
+      # Config sống ngoài image để chỉnh tune mà không rebuild
+      - ./config/settings.yaml:/app/config/settings.yaml:ro
+
+      # HuggingFace model cache — persist để tránh re-download vocos/f5-tts mỗi lần chạy
+      - ./models/hf_cache:/root/.cache/huggingface
+
+    # Không restart tự động — pipeline là batch job, chạy xong thoát
+    restart: "no"
+    networks:
+      - ai-hub

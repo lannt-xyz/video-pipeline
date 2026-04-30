@@ -151,6 +151,9 @@ FORBIDDEN in scene_prompt:
 - Adverbs or qualifiers ("mysteriously", "fiercely", "inadvertently")
 - NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, bare chest, exposed breasts, topless, skinny, undressing, erotic, sensual, bedroom eyes
 - FEMALE MODESTY RULE — ABSOLUTE, no exceptions: Any female figure (living, dead, ghost, spirit, corpse, possessed) MUST be fully clothed. Even nữ tử thi (reanimated female corpse), oan hồn (female ghost), bị nhập (possessed woman) — all must wear visible garments (robes, dress, shroud, tattered cloth, funeral dress). NEVER describe or imply exposed chest, bare torso, or removed clothing on any female subject.
+- DEFAULT GENDER RULE — MANDATORY: Any human figure whose gender is NOT explicitly female MUST be written as "male figure", "male silhouette", or role-prefixed with "male" (e.g., "male daoist figure", "male figure crouching"). NEVER write plain "figure" alone — the image model will default to female if no gender is stated. This applies to unnamed figures, background people, and role-tagged characters (daoist, warrior, investigator, etc.) unless the story explicitly establishes them as female.
+  WRONG: "figure crouching and digging", "figure prying open the coffin lid", "hooded figure"
+  RIGHT: "male figure crouching and digging", "male figure prying open the coffin lid", "hooded male daoist figure"
 - Generic placeholder tags: "dramatic lighting", "detailed background", "action pose", "fight scene" — be SPECIFIC
 - Flat/boring composition tags: "figure standing next to coffin", "character posing", "centered portrait" — these produce stock-photo dead frames. Choose a dramatic angle.
 
@@ -681,6 +684,10 @@ YOUR TASK: Rewrite each "scene_prompt" so it VISUALLY DEPICTS the exact action/c
 
 EXTRACTION RULES — read narration and extract these 5 elements:
 1. WHO: which character role is physically visible in THIS shot (use generic role tags matching this shot's character, NOT the protagonist's role by default: daoist figure, elder figure, middle-aged man, young man, female figure, hooded figure — NEVER character names). Match the role to WHO is described in narration_text — if narration describes a villager digging, use "villager" not "daoist figure".
+   DEFAULT GENDER RULE — CRITICAL: Any human role that is NOT explicitly female MUST include "male" as a qualifier.
+   WRONG: "figure crouching", "hooded figure", "daoist figure", "villager digging"
+   RIGHT: "male figure crouching", "hooded male figure", "male daoist figure", "male villager digging"
+   Only use "female figure", "female corpse", "female ghost" etc. when narration_text explicitly describes a woman, corpse of a woman, or female entity.
 2. ACTION: the specific physical action/pose being performed (must be concrete: "figure prying open stone lid", "figure slamming fist on table", "figure running through fog" — NOT "action pose", "performing ritual", "fighting")
 3. OBJECT/PROP: key objects mentioned in narration (coffin, dagger, talisman, candles, corpse, compass)
 4. LOCATION: specific place described in narration (abandoned temple courtyard, dark excavation pit, candlelit coffin shop interior)
@@ -724,6 +731,10 @@ CREATURE VISUAL TAXONOMY — when narration contains creature keywords, apply th
 
 FEMALE MODESTY RULE — ABSOLUTE, applies to ALL creature types and ALL female figures:
 Every female subject (living, dead, ghost, spirit, corpse, possessed) MUST wear visible garments. Use: "tattered funeral dress", "torn white burial robes", "shredded pale shroud clinging to body", "ragged ghost robes", "disheveled traditional dress". NEVER write: bare chest, exposed breasts, topless, bare torso, cleavage, bare skin on torso. This rule cannot be overridden by any other instruction.
+
+DEFAULT GENDER RULE — MANDATORY: Any human figure whose gender is NOT explicitly female MUST be written as "male figure" or prefixed with "male" (e.g., "male figure crouching", "male daoist figure", "hooded male figure"). NEVER write plain "figure" alone — Flux defaults to female when gender is unspecified.
+  WRONG: "figure crouching and digging", "figure prying open the coffin lid", "hooded figure", "daoist figure"
+  RIGHT: "male figure crouching and digging", "male figure prying open the coffin lid", "hooded male figure", "male daoist figure"
 
 Nữ tử thi (keywords: nữ tử thi, thi thể phụ nữ, xác phụ nữ, chết khi mang thai):
   → "reanimated female corpse wearing tattered white burial robes stained with earth, ashen grey mottled skin on face and hands, completely slack facial muscles with jaw fallen open, milky clouded eyes reflecting no light, lank black hair plastered to hollow sunken cheeks, rigid arms drawn inward, post-mortem lividity darkening neck and collar bones"

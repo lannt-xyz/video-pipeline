@@ -780,6 +780,7 @@ def _build_shot_image_params(
     init_image_path: "Path | None" = None,
     denoise: float = 0.50,
     shot_subject: str = "person_action",
+    scene_ref_image_path: "Path | None" = None,
 ) -> tuple[str, dict]:
     """Build (workflow_path, replacements) for a single shot/frame.
 
@@ -811,6 +812,20 @@ def _build_shot_image_params(
     elif len(char_anchor_pairs) == 1:
         char_obj = char_anchor_pairs[0][0]
         gender_tags = "1girl, solo" if (char_obj and char_obj.gender == "female") else "1boy, solo"
+    else:
+        # No named characters — check if prompt has a human figure without explicit gender.
+        # Default to male to prevent Flux from generating a naked female figure.
+        _prompt_lower = scene_text.lower()
+        _has_figure = any(
+            kw in _prompt_lower
+            for kw in ("figure", "silhouette", "man ", "male", "person", "character")
+        )
+        _is_explicitly_female = any(
+            kw in _prompt_lower
+            for kw in ("female", "woman", "girl", "corpse wearing", "ghost in", "ghost wearing")
+        )
+        if _has_figure and not _is_explicitly_female:
+            gender_tags = "1boy"
 
     scene_prompt_parts = [p for p in [scene_text, artifact_detail_tags, gender_tags] if p]
 
@@ -846,9 +861,32 @@ def _build_shot_image_params(
         replacements["DENOISE"] = denoise
         # img2img_scene still uses SDXL — needs NEGATIVE_PROMPT
         replacements["NEGATIVE_PROMPT"] = _NEGATIVE_BASE
+    elif char_anchor_pairs:
+        # Character shot — use Flux Redux for identity consistency.
+        # Use the first character's anchor.png as the style reference image.
+        # generate_image() will upload the Path to ComfyUI before submission.
+        anchor_path = char_anchor_pairs[0][1][0]  # (char_obj, [anchor_paths])[1][0]
+        if scene_ref_image_path is not None:
+            # Subsequent shot in same scene: dual Redux (char identity + scene background)
+            workflow = "image_gen/workflows/flux_txt2img_scene_dual_redux.json"
+            replacements["ANCHOR_IMAGE"] = anchor_path
+            replacements["REDUX_STRENGTH"] = settings.redux_strength
+            replacements["SCENE_REF_IMAGE"] = scene_ref_image_path
+            replacements["SCENE_REF_STRENGTH"] = settings.scene_ref_strength
+        else:
+            # First shot in this scene (or no scene_id): character Redux only
+            workflow = "image_gen/workflows/flux_txt2img_scene_redux.json"
+            replacements["ANCHOR_IMAGE"] = anchor_path
+            replacements["REDUX_STRENGTH"] = settings.redux_strength
     else:
-        # All txt2img shots → Flux (IPAdapter disabled)
-        workflow = "image_gen/workflows/flux_txt2img_scene.json"
+        if scene_ref_image_path is not None:
+            # Scene-only shot (no characters) following the first shot in the same scene
+            workflow = "image_gen/workflows/flux_txt2img_scene_ref.json"
+            replacements["SCENE_REF_IMAGE"] = scene_ref_image_path
+            replacements["SCENE_REF_STRENGTH"] = settings.scene_ref_strength
+        else:
+            # Scene-only shot (no characters) → plain Flux txt2img
+            workflow = "image_gen/workflows/flux_txt2img_scene.json"
 
     return workflow, replacements
 
@@ -884,6 +922,22 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     # Build scene-level environment baselines for continuity:
     # shots sharing a scene_id inherit location+lighting tags from the first shot.
     scene_env_baselines = _build_scene_env_baselines(script.shots)
+
+    # Pre-populate scene_first_image from already-generated images so that
+    # re-runs (partial regeneration) still benefit from scene reference.
+    scene_first_image: dict[str, Path] = {}
+    for _pre_idx, _pre_shot in enumerate(script.shots):
+        _sid = _pre_shot.scene_id
+        if not _sid or _sid in scene_first_image:
+            continue
+        _pre_frames = _pre_shot.frames if _pre_shot.frames else [None]
+        _first_path = (
+            images_dir / f"shot-{_pre_idx:02d}-frame-00.png"
+            if len(_pre_frames) > 1
+            else images_dir / f"shot-{_pre_idx:02d}.png"
+        )
+        if _first_path.exists():
+            scene_first_image[_sid] = _first_path
 
     db.record_phase_start(episode_num, "images")
 
@@ -940,9 +994,15 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
             else:
                 seed = episode_num * 10000 + idx * 100
 
+            # Scene reference: first generated image of this scene_id used as
+            # soft Redux background anchor for all subsequent shots in the scene.
+            # Only apply on fidx==0 (first frame of shot) to avoid double-anchoring.
+            scene_ref = scene_first_image.get(scene_id) if (scene_id and fidx == 0) else None
+
             workflow, replacements = _build_shot_image_params(
                 prompt_text, char_anchor_pairs, seed, artifact_hints_by_name,
                 shot_subject=shot.shot_subject.value,
+                scene_ref_image_path=scene_ref,
             )
 
             comfyui_client.generate_image(workflow, replacements, output_path)
@@ -950,6 +1010,10 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
                 "Image generated | episode={} shot={} frame={} workflow={}",
                 episode_num, idx, fidx, Path(workflow).stem,
             )
+
+            # Record first frame of this shot as the scene reference for subsequent shots
+            if scene_id and scene_id not in scene_first_image and fidx == 0:
+                scene_first_image[scene_id] = output_path
 
     # Thumbnail for first key shot
     key_indices = [i for i, s in enumerate(script.shots) if s.is_key_shot]
