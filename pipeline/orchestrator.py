@@ -70,6 +70,11 @@ def run_llm(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     summarize_episode(episode_num, chapter_start, chapter_end)
     db.set_episode_status(episode_num, "SUMMARIZED")
 
+    # Distill arc key_events → English visual tags for thumbnail prompt.
+    # Done here while summary model is warm; cached to disk for the images phase.
+    from llm.summarizer import distill_thumbnail_tags
+    distill_thumbnail_tags(episode_num)
+
     # Build profiles only for characters that appear in this episode (idempotent).
     from llm.profile_builder import build_profiles_for_episode
     from llm.summarizer import load_arc_overview
@@ -655,6 +660,7 @@ def _build_thumbnail_scene_prompt(
     *,
     hook_scene_prompt: str | None = None,
     episode_title: str | None = None,
+    arc_tags: str | None = None,
 ) -> str:
     """Build a thumbnail prompt that ties to episode content and induces curiosity.
 
@@ -666,6 +672,10 @@ def _build_thumbnail_scene_prompt(
                            prompt directly (Flux understands English best),
                            but used to pick which curiosity cue is strongest
                            if heuristics in future builds need it.
+        arc_tags:          English visual tags distilled from arc key_events;
+                           placed after subject nouns to reinforce episode-
+                           specific drama without displacing the lighting/
+                           curiosity layers that drive thumbnail readability.
 
     Strategy:
         1. Lighting layer first (highest CLIP attention) — bright cinematic,
@@ -678,6 +688,8 @@ def _build_thumbnail_scene_prompt(
            (person, action, key objects, location). When a hook scene is
            provided we also blend in 3–4 hook nouns so the thumbnail
            visually rhymes with the very first shot of the video.
+        4. Arc tags: condensed English visual tags from arc key_events —
+           grounds the thumbnail in the episode's actual dramatic content.
     """
     _ = episode_title  # reserved for future title-aware variant selection
 
@@ -696,6 +708,8 @@ def _build_thumbnail_scene_prompt(
         parts.append(subject)
     if hook_subject and hook_subject != subject:
         parts.append(hook_subject)
+    if arc_tags:
+        parts.append(arc_tags)
     return ", ".join(parts)
 
 
@@ -952,6 +966,18 @@ def run_images(episode_num: int, db: StateDB, dry_run: bool = False) -> None:
     db.set_episode_status(episode_num, "IMAGES_DONE")
 
 
+def _load_thumbnail_arc_tags(episode_num: int) -> str:
+    """Read cached thumbnail visual tags distilled from arc key_events."""
+    cache_path = (
+        Path(settings.data_dir)
+        / "summaries"
+        / f"episode-{episode_num:03d}-thumb-tags.txt"
+    )
+    if cache_path.exists():
+        return cache_path.read_text(encoding="utf-8").strip()
+    return ""
+
+
 def _generate_thumbnail(
     episode_num: int,
     shot,
@@ -968,10 +994,12 @@ def _generate_thumbnail(
     if thumbnail_path.exists():
         return
 
+    arc_tags = _load_thumbnail_arc_tags(episode_num)
     thumbnail_scene_prompt = _build_thumbnail_scene_prompt(
         shot.scene_prompt,
         hook_scene_prompt=(hook_shot.scene_prompt if hook_shot else None),
         episode_title=episode_title,
+        arc_tags=arc_tags or None,
     )
 
     comfyui_client.generate_image(

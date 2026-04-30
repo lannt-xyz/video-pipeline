@@ -149,7 +149,8 @@ FORBIDDEN in scene_prompt:
 - Character names (Diệp Thiếu Dương, Tiểu Mã, etc.) — character appearance is handled separately
 - Character appearance descriptors (age, hair, eyes, physique, clothing of specific characters) — e.g., "old daoist", "black-haired girl", "young man in white robes". Use role/action tags instead: "daoist figure", "warrior silhouette", "female protagonist"
 - Adverbs or qualifiers ("mysteriously", "fiercely", "inadvertently")
-- NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, skinny, undressing, erotic, sensual, bedroom eyes
+- NSFW or suggestive tags: alluring, seductive, suggestive, provocative, cleavage, navel, bare skin, bare chest, exposed breasts, topless, skinny, undressing, erotic, sensual, bedroom eyes
+- FEMALE MODESTY RULE — ABSOLUTE, no exceptions: Any female figure (living, dead, ghost, spirit, corpse, possessed) MUST be fully clothed. Even nữ tử thi (reanimated female corpse), oan hồn (female ghost), bị nhập (possessed woman) — all must wear visible garments (robes, dress, shroud, tattered cloth, funeral dress). NEVER describe or imply exposed chest, bare torso, or removed clothing on any female subject.
 - Generic placeholder tags: "dramatic lighting", "detailed background", "action pose", "fight scene" — be SPECIFIC
 - Flat/boring composition tags: "figure standing next to coffin", "character posing", "centered portrait" — these produce stock-photo dead frames. Choose a dramatic angle.
 
@@ -398,7 +399,7 @@ def _coerce_shot_item(item: object, episode_num: int, index: int) -> dict | None
     Returns None when the item cannot be interpreted as a shot dict.
     """
     if isinstance(item, dict):
-        return item
+        return _sanitize_shot_dict(item, episode_num, index)
 
     if isinstance(item, str):
         text = item.strip()
@@ -411,7 +412,7 @@ def _coerce_shot_item(item: object, episode_num: int, index: int) -> dict | None
                     "Shot {} was a JSON string — parsed as dict | episode={}",
                     index, episode_num,
                 )
-                return parsed
+                return _sanitize_shot_dict(parsed, episode_num, index)
         except json.JSONDecodeError:
             pass
 
@@ -426,6 +427,72 @@ def _coerce_shot_item(item: object, episode_num: int, index: int) -> dict | None
         index, type(item).__name__, episode_num,
     )
     return None
+
+
+_VALID_CAMERA_FLOWS = frozenset(v.value for v in CameraFlow)
+
+# Best-effort fuzzy mapping for common LLM hallucinations of camera_flow.
+_CAMERA_FLOW_FALLBACK_MAP: dict[str, str] = {
+    "low_angle": "static_wide",
+    "low angle": "static_wide",
+    "low_angle_shot": "static_wide",
+    "low angle_shot": "static_wide",
+    "high_angle": "static_wide",
+    "high angle": "static_wide",
+    "high_angle_shot": "static_wide",
+    "high angle_shot": "static_wide",
+    "zoom_in": "wide_to_close",
+    "zoom in": "wide_to_close",
+    "zoom_out": "close_to_wide",
+    "zoom out": "close_to_wide",
+    "dolly_in": "wide_to_close",
+    "dolly in": "wide_to_close",
+    "dolly_out": "close_to_wide",
+    "tracking": "pan_across",
+    "tracking_shot": "pan_across",
+    "panning": "pan_across",
+    "reveal": "detail_reveal",
+    "close_up": "static_close",
+    "closeup": "static_close",
+    "close up": "static_close",
+    "extreme_close_up": "detail_reveal",
+    "extreme close up": "detail_reveal",
+    "establishing": "static_wide",
+    "establishing_shot": "static_wide",
+}
+
+
+def _sanitize_shot_dict(d: dict, episode_num: int, index: int) -> dict:
+    """Coerce invalid camera_flow values to a valid enum member."""
+    raw_flow = d.get("camera_flow")
+    if raw_flow is None or raw_flow in _VALID_CAMERA_FLOWS:
+        return d
+    normalized = str(raw_flow).strip().lower().replace("-", "_")
+    # Try exact match after normalization
+    if normalized in _VALID_CAMERA_FLOWS:
+        d = dict(d)
+        d["camera_flow"] = normalized
+        return d
+    # Try fuzzy map
+    fallback = _CAMERA_FLOW_FALLBACK_MAP.get(normalized) or _CAMERA_FLOW_FALLBACK_MAP.get(
+        str(raw_flow).strip().lower()
+    )
+    if fallback:
+        logger.warning(
+            "Shot {} camera_flow={!r} not valid — mapped to {!r} | episode={}",
+            index, raw_flow, fallback, episode_num,
+        )
+        d = dict(d)
+        d["camera_flow"] = fallback
+        return d
+    # Unknown value — fall back to default
+    logger.warning(
+        "Shot {} camera_flow={!r} unrecognized — defaulting to 'wide_to_close' | episode={}",
+        index, raw_flow, episode_num,
+    )
+    d = dict(d)
+    d["camera_flow"] = "wide_to_close"
+    return d
 
 
 @retry(
@@ -445,6 +512,7 @@ def _generate_hook_shot(arc_text: str, episode_num: int) -> ShotScript:
     shot_data = raw if isinstance(raw, dict) else _coerce_shot_item(raw, episode_num, 0)
     if shot_data is None:
         raise ValueError(f"Hook shot response is not a valid dict | episode={episode_num}")
+    shot_data = _sanitize_shot_dict(shot_data, episode_num, 0)
     return ShotScript(**shot_data)
 
 
@@ -654,20 +722,23 @@ MINIMUM DETAIL REQUIREMENTS — strictly enforced:
 
 CREATURE VISUAL TAXONOMY — when narration contains creature keywords, apply the EXACT visual profile below. Do NOT use generic "pale corpse" or "ghostly figure" — use the specific template:
 
+FEMALE MODESTY RULE — ABSOLUTE, applies to ALL creature types and ALL female figures:
+Every female subject (living, dead, ghost, spirit, corpse, possessed) MUST wear visible garments. Use: "tattered funeral dress", "torn white burial robes", "shredded pale shroud clinging to body", "ragged ghost robes", "disheveled traditional dress". NEVER write: bare chest, exposed breasts, topless, bare torso, cleavage, bare skin on torso. This rule cannot be overridden by any other instruction.
+
 Nữ tử thi (keywords: nữ tử thi, thi thể phụ nữ, xác phụ nữ, chết khi mang thai):
-  → "reanimated female corpse with ashen grey mottled skin, completely slack facial muscles with jaw fallen open, milky clouded eyes reflecting no light, lank black hair plastered to hollow sunken cheeks, rigid arms drawn inward, post-mortem lividity darkening neck and collar bones"
+  → "reanimated female corpse wearing tattered white burial robes stained with earth, ashen grey mottled skin on face and hands, completely slack facial muscles with jaw fallen open, milky clouded eyes reflecting no light, lank black hair plastered to hollow sunken cheeks, rigid arms drawn inward, post-mortem lividity darkening neck and collar bones"
   → If holding infant add: "clutching small shrouded infant bundle against chest in death-grip embrace"
 
 Thi biến / sát thi (keywords: thi biến, xác biến, dương thi, cương thi, sát thi):
-  → "grotesquely contorted corpse-creature with spine arched backward beyond human range, all joints bent against natural direction, skin split at pressure points revealing dark necrotic tissue, fingers elongated into talon-like claws with blackened nails"
+  → "grotesquely contorted corpse-creature in shredded burial clothes, spine arched backward beyond human range, all joints bent against natural direction, skin split at pressure points revealing dark necrotic tissue, fingers elongated into talon-like claws with blackened nails"
   → Lighting MUST include: "putrid green bioluminescence emanating from skin fissures"
 
 Oan hồn / cô hồn (keywords: oan hồn, cô hồn, hồn oan, vọng hồn):
-  → "translucent vengeful female ghost suspended two feet above ground, hollow black voids where eyes once were, long disheveled black hair floating upward against gravity in frozen scream position, cold cyan light bleeding through semi-transparent silhouette"
+  → "translucent vengeful female ghost in tattered pale ghost robes suspended two feet above ground, hollow black voids where eyes once were, long disheveled black hair floating upward against gravity in frozen scream position, cold cyan light bleeding through semi-transparent silhouette"
   → Background MUST include: "dark soul-mist curling along ground beneath her feet"
 
 Bị nhập / chiếm hồn (keywords: bị nhập, nhập hồn, chiếm hồn, cướp xác):
-  → "possessed living figure with eyes rolled completely white showing only sclera, head tilted at unnatural angle beyond normal range, limbs moving in jerky disconnected marionette motions, subtle dark veins spreading from temples across skin"
+  → "possessed living female figure in full clothing with eyes rolled completely white showing only sclera, head tilted at unnatural angle beyond normal range, limbs moving in jerky disconnected marionette motions, subtle dark veins spreading from temples across skin"
 
 Tiểu quỷ / âm binh (keywords: tiểu quỷ, âm binh, quỷ nhỏ):
   → "small malevolent spirit-creature with shriveled mummified limbs, glistening black skin absorbing surrounding light, oversized head with needle-like serrated teeth in permanent open-mouth grimace, crouched low like a predator"
@@ -703,19 +774,23 @@ _SCENE_ALIGN_OBJECT_RULES: list[tuple[re.Pattern[str], str]] = [
     # ── Creature-specific visual templates (must come before generic fallbacks) ─
     # Nữ tử thi — reanimated female corpse (key visual: upright, holding infant)
     (re.compile(r"nữ tử thi", re.IGNORECASE),
-     "reanimated female corpse with ashen grey mottled skin, completely slack facial muscles with jaw fallen open, milky clouded eyes reflecting no light, lank black hair plastered to hollow sunken cheeks, rigid arms drawn inward, post-mortem lividity darkening neck and collar bones"),
+     "reanimated female corpse wearing tattered white burial robes stained with grave earth, ashen grey mottled skin, mottled blue-grey lividity patches on face, completely slack facial muscles with jaw fallen open, milky clouded eyes reflecting no light, lank black hair plastered to hollow cheeks"),
     # Thi biến — corpse transformation (contorting body, unnatural anatomy)
     (re.compile(r"thi biến|xác biến|cương thi|dương thi|sát thi", re.IGNORECASE),
      "grotesquely contorted corpse-creature with spine arched backward beyond human range, all joints bent against natural direction, skin split at pressure points revealing dark necrotic tissue, fingers elongated into talon-like claws with blackened nails, putrid green bioluminescence emanating from skin fissures"),
     # Oan hồn / cô hồn — vengeful / wandering ghost (semi-transparent, suspended)
     (re.compile(r"oan hồn|cô hồn|hồn oan|vọng hồn", re.IGNORECASE),
-     "translucent vengeful female ghost suspended two feet above ground, hollow black voids where eyes once were, long disheveled black hair floating upward against gravity, cold cyan light bleeding through semi-transparent silhouette, dark soul-mist curling along ground beneath her"),
+     "translucent vengeful female ghost in tattered pale ghost robes suspended two feet above ground, hollow black voids where eyes once were, long disheveled black hair floating upward against gravity, cold cyan light bleeding through semi-transparent silhouette, dark soul-mist curling along ground beneath her"),
     # Generic ghost/spirit fallback — only if no specific type matched above
     (re.compile(r"\bhồn\b|\bvong\b|linh hồn", re.IGNORECASE),
      "semi-transparent spectral figure with desaturated cold cyan color bleeding through form, edges dissolving into surrounding darkness"),
     # Bị nhập — possession (normal person body, wrong eyes, unnatural movement)
     (re.compile(r"bị nhập|nhập hồn|nhập xác|chiếm hồn|cướp xác", re.IGNORECASE),
-     "possessed living figure with eyes rolled completely white showing only sclera, head tilted at unnatural angle, limbs moving in jerky disconnected marionette motions, subtle dark veins spreading from temples across skin"),
+     "possessed living figure in full traditional clothing with eyes rolled completely white showing only sclera, head tilted at unnatural angle, limbs moving in jerky disconnected marionette motions, subtle dark veins spreading from temples across skin"),
+    # ── FEMALE MODESTY ENFORCEMENT ───────────────────────────────────────────
+    # Appended to any shot with female supernatural subject to ensure Flux renders clothing.
+    (re.compile(r"nữ tử thi|cô hồn|oan hồn|hồn oan|phụ nữ.*(?:chết|xác|ma|hồn)|(?:nữ|cô gái|người phụ nữ).*(?:thi thể|xác chết|bị nhập|nhập hồn)", re.IGNORECASE),
+     "wearing tattered burial robes fully covering torso"),
     # Tiểu quỷ / âm binh — minor demons / spirit soldiers
     (re.compile(r"tiểu quỷ|âm binh|quỷ nhỏ", re.IGNORECASE),
      "small malevolent spirit-creature with shriveled mummified limbs, glistening black skin absorbing surrounding light, oversized head with needle-like serrated teeth in permanent open-mouth grimace, crouched low to ground like a predator"),

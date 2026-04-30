@@ -533,3 +533,70 @@ def _save_chunk_summary(chunk: ChunkSummary) -> None:
     existing.sort(key=lambda x: x["chunk_index"])
 
     path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+_THUMBNAIL_TAGS_SYSTEM = (
+    "You are a visual prompt engineer for Stable Diffusion / Flux image generation.\n"
+    "Given Vietnamese story scene beats, extract 8-12 English comma-separated visual tags "
+    "for a thumbnail image.\n"
+    "Rules:\n"
+    "- English ONLY. No Vietnamese. No sentences. No markdown.\n"
+    "- Identify the MOST visually dramatic and shocking moment from the scene beats.\n"
+    "- Tags must be concrete visual elements: character action (verb+noun), location, "
+    "key props, character expression, visual drama.\n"
+    "- Prefer visual specificity over vague atmosphere.\n"
+    "- Output format: one line, comma-separated tags only."
+)
+
+
+def distill_thumbnail_tags(episode_num: int) -> str:
+    """Condense arc key_events into English visual tags for thumbnail prompt.
+
+    Reads the cached ArcOverview and uses the summary LLM (already warm in LLM
+    phase) to extract 8-12 English visual tags from the most dramatic key_events.
+    Result is cached to summaries/episode-NNN-thumb-tags.txt so the images phase
+    can read it without reloading the model.
+
+    Returns empty string on any failure so callers can fall back gracefully.
+    """
+    cache_path = (
+        Path(settings.data_dir)
+        / "summaries"
+        / f"episode-{episode_num:03d}-thumb-tags.txt"
+    )
+    if cache_path.exists():
+        cached = cache_path.read_text(encoding="utf-8").strip()
+        if cached:
+            logger.debug("Thumbnail tags cached | episode={}", episode_num)
+            return cached
+
+    try:
+        arc = load_arc_overview(episode_num)
+    except Exception as exc:
+        logger.warning("Cannot load arc for thumbnail distillation | episode={} err={}", episode_num, exc)
+        return ""
+
+    if not arc.key_events:
+        return ""
+
+    # Use the second half of key_events (typically the dramatic climax).
+    half = max(1, len(arc.key_events) // 2)
+    dramatic_events = arc.key_events[half:]
+    prompt = "Scene beats:\n" + "\n".join(f"- {e}" for e in dramatic_events)
+
+    try:
+        raw = ollama_client.generate(
+            prompt=prompt,
+            system=_THUMBNAIL_TAGS_SYSTEM,
+            temperature=0.3,
+        )
+        tags = raw.strip().strip('"').strip("'")
+        if not tags:
+            return ""
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(tags, encoding="utf-8")
+        logger.info("Thumbnail tags distilled | episode={} tags={}", episode_num, tags[:80])
+        return tags
+    except Exception as exc:
+        logger.warning("Thumbnail tag distillation failed | episode={} err={}", episode_num, exc)
+        return ""
