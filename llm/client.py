@@ -55,9 +55,12 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            "keep_alive": settings.ollama_keep_alive,
             "options": {
                 "temperature": temperature,
                 "num_ctx": settings.llm_context_size,
+                "num_gpu": settings.ollama_num_gpu,
+                "flash_attention": settings.ollama_flash_attention,
             },
         }
         if system:

@@ -60,15 +60,15 @@ NARRATIVE RULES (most critical):
 - Shots must connect: the last sentence of shot N sets up shot N+1.
 - LANGUAGE: narration_text MUST be written entirely in Vietnamese — no English words, phrases, or sentences anywhere, including hook shots.
   WRONG hook (English): "A face from the abyss" — FORBIDDEN even as a stylistic choice
-  RIGHT hook (Vietnamese): "Hắn mở nắp quan tài... và thứ bên trong nhìn tôi." or "Khuôn mặt ấy không phải của người sống."
+  RIGHT hook (Vietnamese): "Hắn mở nắp quan tài... và thứ bên trong đang nhìn lại." or "Khuôn mặt ấy không phải của người sống."
 - NO DUPLICATION between shots: each shot's narration_text MUST contain entirely NEW information. Do NOT repeat sentences, phrases, or paraphrase content from any previous shot. The story must MOVE FORWARD every shot.
-  WRONG: shot N="Tôi ngửi mùi rượu, thuốc lá. Hắn đang đọc tiểu thuyết." then shot N+1="Tôi ngửi mùi rượu, thuốc lá. Hắn đang đọc tiểu thuyết. ..." (verbatim repeat — REJECTED)
+  WRONG: shot N="Hắn ngửi mùi rượu, thuốc lá. Lão đang đọc tiểu thuyết." then shot N+1="Hắn ngửi mùi rượu, thuốc lá. Lão đang đọc tiểu thuyết. ..." (verbatim repeat — REJECTED)
   RIGHT: shot N introduces the action; shot N+1 advances to the consequence/next action.
-- Voice: first-person narrator ("Tôi..."), present-tense tension. The narrator is ALWAYS speaking — never describe what "Thanh Vân Tử" does from the outside.
-  WRONG (third-person): "Thanh Vân Tử phát hiện ra rằng Diệp Thiếu Dương đã bị trúng độc thi. Hắn quyết định điều tra nguyên nhân."
-  RIGHT (first-person): "Tôi nhìn vào vết thương trên cổ Thiếu Dương — đây không phải bệnh thông thường. Đây là độc thi. Kẻ nào đó đã cố tình gieo mầm tử thần vào cơ thể cậu ta."
-  WRONG (third-person): "Thanh Vân Tử yêu cầu Diệp Đại Công dẫn hắn đến mộ."
-  RIGHT (first-person): "Tôi yêu cầu lão dẫn tôi đến ngôi mộ đó — ngôi mộ của người đàn bà chết khi đang mang thai."
+- Voice: third-person omniscient narrator, present-tense tension. Refer to the protagonist by name or pronoun (hắn, y, cô ta, lão) — NEVER use "Tôi" (first-person). Using "Tôi" creates voice inconsistency across episodes where the protagonist changes.
+  WRONG (first-person): "Tôi nhìn vào vết thương trên cổ Thiếu Dương — đây không phải bệnh thông thường."
+  RIGHT (third-person): "Hắn nhìn vào vết thương trên cổ Thiếu Dương — không phải bệnh thông thường. Đây là độc thi. Kẻ nào đó đã cố tình gieo mầm tử thần vào cơ thể cậu ta."
+  WRONG (first-person): "Tôi yêu cầu lão dẫn tôi đến ngôi mộ đó."
+  RIGHT (third-person): "Hắn yêu cầu lão dẫn đến ngôi mộ — ngôi mộ của người đàn bà chết khi đang mang thai."
 - FORBIDDEN phrases: "mọi chuyện leo thang", "những bí ẩn được hé lộ", "cuộc chiến tiếp tục", "các nhân vật xuất hiện".
 
 CAMERA FLOW — Choose the right camera movement for each shot:
@@ -99,6 +99,16 @@ SCENE PROMPT QUALITY — Each scene_prompt MUST contain ALL of the following:
 4. MIDGROUND LAYER: where character stands — "stone staircase of ruined temple", "muddy excavation pit floor"
 5. BACKGROUND LAYER (depth, 2+ elements): "ancient crumbling gateway half-buried in fog, distant pine-covered mountain ridges" — always TWO background entities
 6. SPECIFIC LIGHTING description: "dim oil lantern casting long shadows on walls", NOT just "dramatic lighting"
+
+RULE OF INTERACTION — CRITICAL for Flux (applied on top of layer structure above):
+Flux reads prompt text as natural language. Isolated nouns produce flat, disconnected renders. Every phrase must show HOW elements interact with each other.
+- FORBIDDEN: bare noun phrases — "red umbrella", "scattered talismans", "cold moonlight"
+- REQUIRED: interaction verbs — "red umbrella dripping with rain onto the mud", "scattered talismans clinging to wet earth", "cold moonlight piercing through drifting fog"
+- Preferred interaction verbs: piercing, engulfing, reflecting, casting, dissolving, clinging, illuminating, swallowing, bleeding into, cutting through, dripping onto
+- Apply this to EVERY layer: foreground elements act on each other, lighting interacts with surfaces, background elements bleed into atmosphere
+- Keep phrases comma-separated (NOT full prose sentences) — this preserves layer control and token efficiency
+WRONG: "cold blue moonlight, drifting fog, scattered talismans on wet earth"
+RIGHT: "cold blue moonlight cutting through drifting fog, scattered talismans dissolving into wet earth"
 
 SCENE PROMPT EXAMPLES:
 WRONG: "coffin shop interior, intense fight scene, wooden shelves, dim lantern light, dynamic action pose, anime style, dramatic lighting, detailed background, no text, no watermarks"
@@ -148,7 +158,7 @@ Each shot MUST declare a shot_subject that tells the image generator WHAT THE CA
 Allowed values: "person_action" | "corpse_face" | "wound" | "bloody_object" | "supernatural_entity" | "ritual_object" | "environment"
 
 MANDATORY RULES:
-- If narration contains ANY of: xác, thi thể, tử thi, thây, xác chết, mắt trợn, mắt mở to, trắng bệch, trắng nhợt, tái mét — shot_subject = "corpse_face" and scene_prompt opens with "extreme close-up of pale dead face" or "macro shot of wide staring dead eyes".
+- If narration contains ANY of: xác, thi thể, tử thi, thây, xác chết, mắt trợn, mắt mở to, trắng bệch, trắng nhợt, tái mét — shot_subject = "corpse_face" and scene_prompt opens with "extreme close-up of pale dead face" or "macro shot of wide staring dead eyes". Always apply CORPSE FACE DETAIL PALETTE (see below) — add specific dead-eye and skin tags to make the face visually terrifying, not merely "pale". For female corpse: include "completely slack facial muscles, no trace of expression" to strip all living beauty. For child corpse: include "small pallid face, youth made ghastly by death pallor" — the age contrast is the horror lever.
 - If narration contains: vết cắn, vết thương, máu chảy, rách da, dấu răng, cào xé — shot_subject = "wound" and scene_prompt opens with "macro shot of [wound] on [body part]".
 - If narration centers on: dao đẫm máu, kiếm dính máu, bùa cháy, talisman burning, object covered in blood — shot_subject = "bloody_object" and scene_prompt opens with "extreme close-up of [object]".
 - If narration describes: ma, quỷ, hồn, vong, thi biến, bị nhập, hiện hình, possession, spirit manifest — shot_subject = "supernatural_entity" and scene_prompt opens with "low angle shot of ghostly figure emerging from mist" or similar.
@@ -190,6 +200,12 @@ CINEMATIC QUALITY LAYER — each scene_prompt MUST include:
   - Graveyard/night → "9000K cold blue moonlight" + one of: "volumetric god rays through mist", "rim light on hooded figure edges"
   - Ghost/supernatural → "desaturated cyan light" + "subsurface scattering on translucent skin"
   - Corpse close-up → "subsurface scattering on pale parchment skin" (essential for dead flesh realism)
+- CORPSE FACE DETAIL PALETTE — add 2–4 of these to any corpse_face shot:
+  Eyes (pick 1): "blank glazed white eyes", "milky clouded pupils", "half-open unfocused eyes staring at nothing", "wide open unseeing eyes with burst blood vessels"
+  Skin (pick 1–2): "ashen grey skin", "mottled blue-grey lividity patches", "deathly pallid skin with visible capillary darkening", "sunken hollow cheeks"
+  Expression/jaw: "completely slack facial muscles", "jaw slightly fallen open", "lips parted showing no breath"
+  For female corpse specifically: combine skin palette above with "delicate features rendered lifeless, no trace of expression" — do NOT use beauty tags like "beautiful", "elegant" on a corpse shot
+  For child corpse specifically: "small round pallid face", "closed or half-open eyes with no life behind them", "youth made ghastly by death pallor" — the contrast of youth + death is the horror anchor
 - FILM STOCK: choose one based on scene mood:
   - Night/graveyard/horror → "bleach bypass color grade"
   - Indoor candle/amber → "Kodak Vision3 5219 warm film grain"
@@ -293,7 +309,7 @@ Write EXACTLY 8 shots. Output JSON matching [OUTPUT CONTRACT] at the end.
 6. SHOT 1 must contain at least 1 tension verb (nhìn, hét, chạy, đập, mở, lao, vung, đâm, chạm, ngã, rít, xé, túm, đẩy, kéo).
 7. CLIFFHANGER SHOT 7: cut mid-revelation or open question. No CTA, no "theo dõi tiếp", no resolution.
 7b. NO DUPLICATION across shots: every shot's narration MUST be NEW information. Never repeat or paraphrase sentences/phrases from any earlier shot. The story moves forward each shot. (Rule: narration_uniqueness)
-   ❌ shot N="Tôi nhạo báng sách. Hắn nói: 'Tự viết đi.' Tôi đáp: 'Ta sẽ viết hơn.'" → shot N+1="...Hắn nói: 'Tự viết đi.' Tôi đáp: 'Ta sẽ viết hơn.'" (verbatim repeat — REJECTED)
+   ❌ shot N="Hắn nhạo báng quyển sách. Lão nói: 'Tự viết đi.' Hắn đáp: 'Ta sẽ viết hơn.'" → shot N+1="...Lão nói: 'Tự viết đi.' Hắn đáp: 'Ta sẽ viết hơn.'" (verbatim repeat — REJECTED)
    ✅ shot N=action setup → shot N+1=consequence/escalation, no shared sentences.
 
 [STRUCTURE RULES]:
@@ -343,7 +359,7 @@ shots length MUST be 8.
 ❌ Shot A+1: "Theo cổ thuật, nó được dùng trong các nghi thức huyền bí..."
    (Both expository, back-to-back — violates rule 4 + 5 + 12.)
 ✅ Shot A: "Hắn lùi lại — vết bầm trên cổ thằng bé chuyển sang đen."
-✅ Shot A+1: "Tôi nhận ra đó là dấu của Thi Du Cao. Đã quá muộn."
+✅ Shot A+1: "Hắn nhận ra đó là dấu của Thi Du Cao. Đã quá muộn."
    (Action → consequence-framed lore. Curiosity preserved.)"""
 
 
@@ -624,6 +640,17 @@ REWRITE RULES:
   "grieving" → "head bowed low, shoulders shaking, hands pressed to face"
   "surprised" → "body recoiling backward, chin tucked, hands instinctively raised"
   FORBIDDEN in action tags: "shocked", "afraid", "emotional", "reacting", "feeling", "disturbed"
+
+MINIMUM DETAIL REQUIREMENTS — strictly enforced:
+- scene_prompt MUST contain AT LEAST 6 comma-separated phrases.
+- Each phrase MUST be at least 5 words — single-noun phrases like "red umbrella" or "night fog" are FORBIDDEN. Write "rain-soaked red umbrella casting crimson shadow on mud" instead.
+- INTERACTION RULE: every element must show HOW it interacts with something else. Use active verbs: piercing, casting, engulfing, clinging, dissolving, bleeding into, dripping onto, reflecting off, cutting through, swallowing.
+  WRONG: "cold blue moonlight, drifting fog, scattered talismans on wet earth"
+  RIGHT: "cold blue moonlight cutting through drifting fog, scattered talismans clinging to rain-soaked earth"
+- TEXTURE RULE: every object phrase MUST include a material or surface detail.
+  WRONG: "iron crowbar" → RIGHT: "corroded iron crowbar with rust bloom along shaft"
+  WRONG: "talisman paper" → RIGHT: "yellowed talisman paper with ink bleeding at edges from moisture"
+- Total scene_prompt word count MUST be at least 40 words. If shorter, EXPAND by adding texture, material, and interaction details.
 
 Return a JSON ARRAY (same length as input, same order):
 [{"shot_index": 0, "scene_prompt": "rewritten phrases..."}, ...]
@@ -1446,7 +1473,7 @@ def _rewrite_scene_prompts_from_narration(
     )
     try:
         raw = scene_prompt_client.generate_json(
-            prompt=prompt, system=_NARRATION_ALIGN_SYSTEM, temperature=0.3
+            prompt=prompt, system=_NARRATION_ALIGN_SYSTEM, temperature=0.5
         )
     except Exception as exc:
         logger.warning(

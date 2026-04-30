@@ -15,6 +15,9 @@ _YAML_FILE = str(_PROJECT_ROOT / "config" / "settings.yaml")
 class OllamaLLMConfig(BaseModel):
     url: str = "http://localhost:11434"
     default_model: str = "mistral-small:22b"  # fallback for all phases using provider=ollama
+    num_gpu: int = 999          # layers to offload to GPU; 999 = force all layers on GPU
+    keep_alive: str = "5m"      # how long Ollama keeps model loaded after request (e.g. "5m", "-1" = forever, "0" = unload immediately)
+    flash_attention: bool = True  # enable flash attention for lower VRAM + faster inference
 
 
 class GitHubLLMConfig(BaseModel):
@@ -261,6 +264,18 @@ class Settings(BaseSettings):
     @property
     def ollama_url(self) -> str:
         return self.llm.ollama.url
+
+    @property
+    def ollama_num_gpu(self) -> int:
+        return self.llm.ollama.num_gpu
+
+    @property
+    def ollama_keep_alive(self) -> str:
+        return self.llm.ollama.keep_alive
+
+    @property
+    def ollama_flash_attention(self) -> bool:
+        return self.llm.ollama.flash_attention
 
     @property
     def llm_timeout(self) -> int:

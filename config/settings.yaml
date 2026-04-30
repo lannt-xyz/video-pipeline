@@ -22,7 +22,10 @@ llm:
   # Override per-phase by setting phases.<phase>.model explicitly
   ollama:
     url: "http://localhost:11434"
-    default_model: "mistral-nemo:12b"
+    default_model: "gemma4:e4b"
+    num_gpu: 999          # 999 = force all layers on GPU (full GPU offload)
+    keep_alive: "5m"      # "-1" = giữ model trong VRAM mãi; "0" = unload ngay sau request (nhường VRAM cho ComfyUI)
+    flash_attention: true
 
   # GitHub Models API creds (token: set PIPELINE_GITHUB_TOKEN env var — never hardcode)
   # model is shared across all phases — no per-phase override needed
