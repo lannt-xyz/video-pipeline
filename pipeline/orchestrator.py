@@ -835,9 +835,23 @@ def _build_shot_image_params(
     # IMPORTANT: placed at the FRONT so Flux/T5 attends to identity strongly
     # before reading the scene description. Natural-language sentence (not
     # tag-soup) because T5 understands prose better.
+    #
+    # Exception: when the frame opens with a wide/establishing/pan camera tag,
+    # keep that tag at position-0 so Flux respects composition intent FIRST,
+    # then inject appearance at position-1. Without this, the portrait pull
+    # from appearance_tags overrides the wide framing → every shot-frame-0
+    # generates a face close-up regardless of camera_flow.
+    _WIDE_CAMERA_KEYWORDS = ("wide", "establishing", "panoram", "full shot", "long shot", "left side", "right side")
+    _first_scene_tag = scene_text.split(",")[0].lower() if scene_text else ""
+    _frame_wants_wide = any(kw in _first_scene_tag for kw in _WIDE_CAMERA_KEYWORDS)
+
     appearance_tags = _build_character_appearance_tags(char_anchor_pairs)
     if appearance_tags:
-        scene_prompt_parts.insert(0, appearance_tags)
+        if _frame_wants_wide:
+            # Insert after scene_text (position 1) to let the wide camera tag lead.
+            scene_prompt_parts.insert(1, appearance_tags)
+        else:
+            scene_prompt_parts.insert(0, appearance_tags)
 
     # Prepend wide-framing tags for pure environment shots (no character, no shock close-up)
     if not char_anchor_pairs and not wants_closeup:

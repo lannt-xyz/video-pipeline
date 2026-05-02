@@ -6,7 +6,7 @@ total_chapters: 3534
 chapters_per_episode: 1
 
 # API endpoints
-comfyui_url: "http://comfyui:8188"
+comfyui_url: "http://localhost:8188"
 
 # LLM configuration — unified per-phase settings
 # provider: "ollama" | "github"
@@ -21,7 +21,7 @@ llm:
   # Ollama — default model shared by all phases using provider=ollama
   # Override per-phase by setting phases.<phase>.model explicitly
   ollama:
-    url: "http://ollama:11434"
+    url: "http://localhost:11434"
     default_model: "gemma4:e4b"
     num_gpu: 999          # 999 = force all layers on GPU (full GPU offload)
     keep_alive: "5m"      # "-1" = giữ model trong VRAM mãi; "0" = unload ngay sau request (nhường VRAM cho ComfyUI)
